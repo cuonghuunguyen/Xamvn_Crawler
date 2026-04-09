@@ -223,7 +223,7 @@ export default function App() {
 
             {/* Count */}
             <span className="ml-auto text-xs text-gray-500 shrink-0">
-              {mediaTotal} {mediaType === 'all' ? 'items' : mediaType + 's'}
+              {mediaTotal} {mediaType === 'all' ? 'items' : { image: 'images', video: 'videos' }[mediaType]}
             </span>
           </div>
 

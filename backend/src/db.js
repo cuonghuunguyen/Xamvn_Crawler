@@ -76,7 +76,7 @@ const ready = exec(`
     thread_id INTEGER NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
     post_id INTEGER REFERENCES posts(id) ON DELETE CASCADE,
     url TEXT NOT NULL,
-    type TEXT NOT NULL,
+    type TEXT NOT NULL CHECK(type IN ('image','video')),
     thumbnail TEXT,
     platform TEXT,
     video_id TEXT,
@@ -86,6 +86,7 @@ const ready = exec(`
 
   CREATE INDEX IF NOT EXISTS idx_media_type ON media(type);
   CREATE INDEX IF NOT EXISTS idx_media_thread ON media(thread_id);
+  CREATE INDEX IF NOT EXISTS idx_media_url ON media(url);
   CREATE INDEX IF NOT EXISTS idx_threads_status ON threads(status);
 `);
 
