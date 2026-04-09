@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const db = require('../db');
+const { run, get, all, ready } = require('../db');
 const { crawlThread } = require('../crawler');
 
 // In-memory crawl job status (per thread URL)
@@ -8,6 +8,7 @@ const crawlJobs = new Map(); // url -> { status, progress, error }
 
 // POST /api/crawl — start crawling a thread
 router.post('/crawl', async (req, res) => {
+  await ready;
   const { url } = req.body;
   if (!url || typeof url !== 'string') {
     return res.status(400).json({ error: 'url is required' });
@@ -24,7 +25,7 @@ router.post('/crawl', async (req, res) => {
   }
 
   // Check if thread already exists and finished
-  const existingThread = db.prepare('SELECT * FROM threads WHERE url = ?').get(normUrl);
+  const existingThread = await get('SELECT * FROM threads WHERE url = ?', [normUrl]);
   if (existingThread && existingThread.status === 'done') {
     return res.json({ message: 'Thread already crawled', thread: existingThread, cached: true });
   }
@@ -34,13 +35,13 @@ router.post('/crawl', async (req, res) => {
   crawlJobs.set(normUrl, job);
 
   // Upsert thread record
-  db.prepare(`
-    INSERT INTO threads (url, thread_id, status)
-    VALUES (?, '', 'running')
-    ON CONFLICT(url) DO UPDATE SET status='running'
-  `).run(normUrl);
+  await run(
+    `INSERT INTO threads (url, thread_id, status) VALUES (?, '', 'running')
+     ON CONFLICT(url) DO UPDATE SET status='running'`,
+    [normUrl]
+  );
 
-  const threadRow = db.prepare('SELECT id FROM threads WHERE url = ?').get(normUrl);
+  const threadRow = await get('SELECT id FROM threads WHERE url = ?', [normUrl]);
 
   // Run crawl asynchronously
   (async () => {
@@ -50,65 +51,57 @@ router.post('/crawl', async (req, res) => {
         if (job.progress.length > 100) job.progress.shift();
       });
 
-      // Persist to DB
-      const saveThread = db.transaction(() => {
-        // Update thread
-        db.prepare(`
-          UPDATE threads
-          SET thread_id = ?, title = ?, page_count = ?, status = 'done', crawled_at = datetime('now')
-          WHERE id = ?
-        `).run(result.threadId, result.title, result.pageCount, threadRow.id);
+      // Update thread
+      await run(
+        `UPDATE threads SET thread_id = ?, title = ?, page_count = ?, status = 'done', crawled_at = datetime('now') WHERE id = ?`,
+        [result.threadId, result.title, result.pageCount, threadRow.id]
+      );
 
-        const insertPost = db.prepare(`
-          INSERT OR IGNORE INTO posts (thread_id, post_id, author, content)
-          VALUES (?, ?, ?, ?)
-        `);
-        const insertMedia = db.prepare(`
-          INSERT OR IGNORE INTO media (thread_id, post_id, url, type, thumbnail, platform, video_id)
-          VALUES (?, ?, ?, ?, ?, ?, ?)
-        `);
-
-        for (const post of result.posts) {
-          insertPost.run(threadRow.id, post.postId, post.author, post.content);
-          const postRow = db.prepare('SELECT id FROM posts WHERE thread_id = ? AND post_id = ?')
-            .get(threadRow.id, post.postId);
+      // Persist posts and media
+      for (const post of result.posts) {
+        try {
+          await run(
+            `INSERT OR IGNORE INTO posts (thread_id, post_id, author, content) VALUES (?, ?, ?, ?)`,
+            [threadRow.id, post.postId, post.author, post.content]
+          );
+          const postRow = await get(
+            'SELECT id FROM posts WHERE thread_id = ? AND post_id = ?',
+            [threadRow.id, post.postId]
+          );
           const postDbId = postRow ? postRow.id : null;
 
           for (const m of post.media) {
-            insertMedia.run(
-              threadRow.id,
-              postDbId,
-              m.url,
-              m.type,
-              m.thumbnail || null,
-              m.platform || null,
-              m.video_id || null,
+            await run(
+              `INSERT OR IGNORE INTO media (thread_id, post_id, url, type, thumbnail, platform, video_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?)`,
+              [threadRow.id, postDbId, m.url, m.type, m.thumbnail || null, m.platform || null, m.video_id || null]
             );
           }
+        } catch (_) {
+          // skip individual post errors
         }
-      });
+      }
 
-      saveThread();
       job.status = 'done';
       job.result = { threadId: result.threadId, title: result.title };
     } catch (err) {
       job.status = 'error';
       job.error = err.message;
-      db.prepare("UPDATE threads SET status = 'error' WHERE id = ?").run(threadRow.id);
+      await run("UPDATE threads SET status = 'error' WHERE id = ?", [threadRow.id]);
     }
   })();
 
-  res.json({ message: 'Crawl started', url: normUrl, jobId: normUrl });
+  res.json({ message: 'Crawl started', url: normUrl });
 });
 
 // GET /api/crawl/status?url=... — poll job status
-router.get('/crawl/status', (req, res) => {
+router.get('/crawl/status', async (req, res) => {
+  await ready;
   const { url } = req.query;
   if (!url) return res.status(400).json({ error: 'url query param required' });
   const job = crawlJobs.get(url);
   if (!job) {
-    // Check DB
-    const t = db.prepare('SELECT status FROM threads WHERE url = ?').get(url);
+    const t = await get('SELECT status FROM threads WHERE url = ?', [url]);
     if (t) return res.json({ status: t.status, progress: [] });
     return res.status(404).json({ error: 'No crawl job found for this URL' });
   }
@@ -116,54 +109,52 @@ router.get('/crawl/status', (req, res) => {
 });
 
 // GET /api/threads — list all crawled threads
-router.get('/threads', (req, res) => {
+router.get('/threads', async (req, res) => {
+  await ready;
   const { page = 1, limit = 20, search = '' } = req.query;
   const offset = (parseInt(page) - 1) * parseInt(limit);
   const like = `%${search}%`;
 
-  const threads = db.prepare(`
-    SELECT t.*,
+  const threads = await all(
+    `SELECT t.*,
       (SELECT COUNT(*) FROM media WHERE thread_id = t.id AND type = 'image') AS image_count,
       (SELECT COUNT(*) FROM media WHERE thread_id = t.id AND type = 'video') AS video_count
-    FROM threads t
-    WHERE t.status = 'done' AND (t.title LIKE ? OR t.url LIKE ?)
-    ORDER BY t.crawled_at DESC
-    LIMIT ? OFFSET ?
-  `).all(like, like, parseInt(limit), offset);
+     FROM threads t
+     WHERE t.status = 'done' AND (t.title LIKE ? OR t.url LIKE ?)
+     ORDER BY t.crawled_at DESC
+     LIMIT ? OFFSET ?`,
+    [like, like, parseInt(limit), offset]
+  );
 
-  const total = db.prepare(`
-    SELECT COUNT(*) as cnt FROM threads
-    WHERE status = 'done' AND (title LIKE ? OR url LIKE ?)
-  `).get(like, like).cnt;
+  const countRow = await get(
+    `SELECT COUNT(*) as cnt FROM threads WHERE status = 'done' AND (title LIKE ? OR url LIKE ?)`,
+    [like, like]
+  );
 
-  res.json({ threads, total, page: parseInt(page), limit: parseInt(limit) });
+  res.json({ threads, total: countRow.cnt, page: parseInt(page), limit: parseInt(limit) });
 });
 
 // GET /api/threads/:id — thread detail
-router.get('/threads/:id', (req, res) => {
-  const thread = db.prepare('SELECT * FROM threads WHERE id = ?').get(req.params.id);
+router.get('/threads/:id', async (req, res) => {
+  await ready;
+  const thread = await get('SELECT * FROM threads WHERE id = ?', [req.params.id]);
   if (!thread) return res.status(404).json({ error: 'Thread not found' });
   res.json(thread);
 });
 
 // DELETE /api/threads/:id — remove a thread and its data
-router.delete('/threads/:id', (req, res) => {
-  const thread = db.prepare('SELECT id FROM threads WHERE id = ?').get(req.params.id);
+router.delete('/threads/:id', async (req, res) => {
+  await ready;
+  const thread = await get('SELECT id FROM threads WHERE id = ?', [req.params.id]);
   if (!thread) return res.status(404).json({ error: 'Thread not found' });
-  db.prepare('DELETE FROM threads WHERE id = ?').run(req.params.id);
+  await run('DELETE FROM threads WHERE id = ?', [req.params.id]);
   res.json({ message: 'Thread deleted' });
 });
 
 // GET /api/media — get media with filters
-router.get('/media', (req, res) => {
-  const {
-    thread_id,
-    type,
-    search = '',
-    page = 1,
-    limit = 50,
-    platform,
-  } = req.query;
+router.get('/media', async (req, res) => {
+  await ready;
+  const { thread_id, type, search = '', page = 1, limit = 50, platform } = req.query;
 
   const conditions = ["t.status = 'done'"];
   const params = [];
@@ -185,37 +176,37 @@ router.get('/media', (req, res) => {
     params.push(`%${search}%`, `%${search}%`);
   }
 
-  const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
+  const where = 'WHERE ' + conditions.join(' AND ');
   const offset = (parseInt(page) - 1) * parseInt(limit);
 
-  const media = db.prepare(`
-    SELECT m.*, t.title AS thread_title, t.url AS thread_url
-    FROM media m
-    JOIN threads t ON m.thread_id = t.id
-    ${where}
-    ORDER BY m.id DESC
-    LIMIT ? OFFSET ?
-  `).all(...params, parseInt(limit), offset);
+  const media = await all(
+    `SELECT m.*, t.title AS thread_title, t.url AS thread_url
+     FROM media m
+     JOIN threads t ON m.thread_id = t.id
+     ${where}
+     ORDER BY m.id DESC
+     LIMIT ? OFFSET ?`,
+    [...params, parseInt(limit), offset]
+  );
 
-  const total = db.prepare(`
-    SELECT COUNT(*) AS cnt
-    FROM media m
-    JOIN threads t ON m.thread_id = t.id
-    ${where}
-  `).get(...params).cnt;
+  const countRow = await get(
+    `SELECT COUNT(*) AS cnt FROM media m JOIN threads t ON m.thread_id = t.id ${where}`,
+    params
+  );
 
-  res.json({ media, total, page: parseInt(page), limit: parseInt(limit) });
+  res.json({ media, total: countRow.cnt, page: parseInt(page), limit: parseInt(limit) });
 });
 
 // GET /api/stats — overall stats
-router.get('/stats', (req, res) => {
-  const stats = db.prepare(`
+router.get('/stats', async (req, res) => {
+  await ready;
+  const stats = await get(`
     SELECT
       (SELECT COUNT(*) FROM threads WHERE status = 'done') AS threads,
       (SELECT COUNT(*) FROM media WHERE type = 'image') AS images,
       (SELECT COUNT(*) FROM media WHERE type = 'video') AS videos,
       (SELECT COUNT(*) FROM posts) AS posts
-  `).get();
+  `);
   res.json(stats);
 });
 
