@@ -1,6 +1,9 @@
 const axios = require('axios');
 const cheerio = require('cheerio');
 
+const DEFAULT_USER_AGENT =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
+
 // Delay helper
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -20,12 +23,13 @@ function parseThreadUrl(rawUrl) {
 }
 
 // Build axios instance with browser-like headers
-function buildClient() {
+function buildClient(baseUrl, options = {}) {
+  const cookie = options.cookie || process.env.XAMVN_COOKIE || '';
   return axios.create({
     timeout: 20000,
     headers: {
       'User-Agent':
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        DEFAULT_USER_AGENT,
       Accept:
         'text/html,application/xhtml+xml,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
       'Accept-Language': 'en-US,en;q=0.9,vi;q=0.8',
@@ -34,12 +38,144 @@ function buildClient() {
       Pragma: 'no-cache',
       Connection: 'keep-alive',
       'Upgrade-Insecure-Requests': '1',
+      Referer: `${baseUrl}/`,
+      Origin: baseUrl,
       'Sec-Fetch-Dest': 'document',
       'Sec-Fetch-Mode': 'navigate',
-      'Sec-Fetch-Site': 'none',
+      'Sec-Fetch-Site': 'same-origin',
+      ...(cookie ? { Cookie: cookie } : {}),
     },
     maxRedirects: 5,
   });
+}
+
+function isCloudflareChallenge(err) {
+  const status = err && err.response ? err.response.status : null;
+  if (status !== 403) return false;
+  const headers = (err.response && err.response.headers) || {};
+  return String(headers['cf-mitigated'] || '').toLowerCase() === 'challenge';
+}
+
+function parseCookieHeader(cookieHeader) {
+  if (!cookieHeader) return [];
+  return cookieHeader
+    .split(';')
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .map((part) => {
+      const idx = part.indexOf('=');
+      if (idx <= 0) return null;
+      return {
+        name: part.slice(0, idx).trim(),
+        value: part.slice(idx + 1).trim(),
+      };
+    })
+    .filter(Boolean);
+}
+
+async function fetchHtmlWithPlaywright(url, baseUrl, cookie, report) {
+  let playwright;
+  try {
+    playwright = require('playwright');
+  } catch (_) {
+    return {
+      ok: false,
+      error:
+        'Cloudflare challenge detected and Playwright is not installed. Run "npm i playwright" in backend and retry with a valid cookie.',
+    };
+  }
+
+  const base = new URL(baseUrl);
+  let browser;
+  try {
+    browser = await playwright.chromium.launch({
+      headless: true,
+      args: ['--disable-blink-features=AutomationControlled', '--no-sandbox'],
+    });
+    const context = await browser.newContext({
+      userAgent: DEFAULT_USER_AGENT,
+      extraHTTPHeaders: {
+        'Accept-Language': 'en-US,en;q=0.9,vi;q=0.8',
+        'Accept-Encoding': 'gzip, deflate, br',
+        Accept:
+          'text/html,application/xhtml+xml,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        Referer: `${baseUrl}/`,
+        Origin: baseUrl,
+        'Upgrade-Insecure-Requests': '1',
+      },
+    });
+
+    const parsedCookies = parseCookieHeader(cookie || process.env.XAMVN_COOKIE || '');
+    if (parsedCookies.length > 0) {
+      report(`Playwright: adding ${parsedCookies.length} cookie(s) to context`);
+      await context.addCookies(
+        parsedCookies.map((c) => ({
+          name: c.name,
+          value: c.value,
+          domain: base.hostname,
+          path: '/',
+          secure: true,
+          httpOnly: false,
+          sameSite: 'Lax',
+        }))
+      );
+    } else {
+      report('Playwright: no cookies provided; attempting without authentication');
+    }
+
+    const page = await context.newPage();
+    report(`Playwright: navigating to ${url}...`);
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 });
+    report('Playwright: page loaded, waiting for dynamic content...');
+    await page.waitForTimeout(3000);
+    const html = await page.content();
+    const title = (await page.title()) || '';
+
+    report(`Playwright: page title = "${title}"`);
+
+    if (/just a moment/i.test(title) || /cf-challenge|challenge-platform/i.test(html)) {
+      report('Playwright: Cloudflare challenge detected on page');
+      return {
+        ok: false,
+        error:
+          'Cloudflare challenge is still active after Playwright. Either: (1) your cookie is expired/invalid, (2) your xamvn account has access restrictions, or (3) Cloudflare requires additional verification. Try refreshing your browser session and copying a fresh Cookie header.',
+      };
+    }
+
+    report('Playwright: page loaded successfully, no Cloudflare challenge detected');
+
+    report('Playwright fallback succeeded. Continuing crawl...');
+    return { ok: true, html };
+  } catch (err) {
+    const rawMessage = String(err && err.message ? err.message : err);
+    const firstLine = rawMessage.split('\n')[0].trim();
+    const missingLib = /error while loading shared libraries: ([^\s:]+)/i.exec(rawMessage);
+    if (missingLib) {
+      return {
+        ok: false,
+        error: `Playwright fallback failed due to missing system library (${missingLib[1]}). Install Playwright runtime deps in the container and retry.`,
+      };
+    }
+    return {
+      ok: false,
+      error: `Playwright fallback failed: ${firstLine}`,
+    };
+  } finally {
+    if (browser) await browser.close();
+  }
+}
+
+async function fetchHtml(client, url, baseUrl, options, report, label) {
+  try {
+    const resp = await client.get(url);
+    return resp.data;
+  } catch (err) {
+    if (!isCloudflareChallenge(err)) throw err;
+    report(`Cloudflare challenge detected while ${label}. Trying Playwright fallback...`);
+    const fallback = await fetchHtmlWithPlaywright(url, baseUrl, options.cookie, report);
+    if (fallback.ok) return fallback.html;
+    throw new Error(fallback.error);
+  }
 }
 
 // Extract media (images + videos) from a cheerio-loaded page
@@ -206,9 +342,9 @@ function getTitle($) {
 }
 
 // Main crawl function
-async function crawlThread(rawUrl, onProgress) {
+async function crawlThread(rawUrl, onProgress, options = {}) {
   const { threadId, base } = parseThreadUrl(rawUrl);
-  const client = buildClient();
+  const client = buildClient(base, options);
   const report = (msg) => onProgress && onProgress(msg);
 
   report(`Fetching first page of thread ${threadId}…`);
@@ -216,8 +352,14 @@ async function crawlThread(rawUrl, onProgress) {
   // Fetch page 1
   let page1Html;
   try {
-    const resp = await client.get(`${base}/threads/${threadId}/`);
-    page1Html = resp.data;
+    page1Html = await fetchHtml(
+      client,
+      `${base}/threads/${threadId}/`,
+      base,
+      options,
+      report,
+      `fetching first page of thread ${threadId}`
+    );
   } catch (err) {
     const status = err.response ? err.response.status : 'network error';
     throw new Error(`Failed to fetch thread (${status}): ${err.message}`);
@@ -236,8 +378,15 @@ async function crawlThread(rawUrl, onProgress) {
     report(`Fetching page ${p}/${pageCount}…`);
     await sleep(800); // Polite delay
     try {
-      const resp = await client.get(`${base}/threads/${threadId}/page-${p}`);
-      const $p = cheerio.load(resp.data);
+      const html = await fetchHtml(
+        client,
+        `${base}/threads/${threadId}/page-${p}`,
+        base,
+        options,
+        report,
+        `fetching page ${p}`
+      );
+      const $p = cheerio.load(html);
       const pagePosts = parsePage($p, base);
       allPosts.push(...pagePosts);
     } catch (err) {

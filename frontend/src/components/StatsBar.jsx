@@ -1,7 +1,7 @@
 export default function StatsBar({ stats }) {
   if (!stats) return null;
   return (
-    <div className="flex gap-6 text-sm text-gray-400">
+    <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs sm:text-sm text-gray-400">
       <span>
         <span className="text-white font-semibold">{stats.threads}</span> threads
       </span>

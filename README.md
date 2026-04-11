@@ -67,3 +67,17 @@ The backend serves `frontend/dist` as static files when `NODE_ENV=production`.
 ## Example
 
 Paste `https://xamvn.bond/threads/91770/` into the input field and click **Crawl**. The sidebar will update with the thread once complete and the media grid will populate with all images and videos found in the thread.
+
+## Troubleshooting 403 (Cloudflare)
+
+If crawl fails with `403` and Cloudflare challenge:
+
+1. Open the target thread in your normal browser and ensure it loads.
+2. Open DevTools -> Network -> select the thread document request.
+3. Copy the `Cookie` value from Request Headers.
+4. Paste it into the optional Cookie input in the crawler UI and retry.
+
+Notes:
+- Cookie value is stored in browser localStorage for convenience.
+- Backend also supports `XAMVN_COOKIE` environment variable.
+- When axios is blocked by Cloudflare, backend automatically retries with Playwright fallback.

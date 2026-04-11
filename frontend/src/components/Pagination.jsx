@@ -8,11 +8,11 @@ export default function Pagination({ page, total, limit, onChange }) {
   for (let i = start; i <= end; i++) pages.push(i);
 
   return (
-    <div className="flex items-center justify-center gap-1 mt-6">
+    <div className="flex flex-wrap items-center justify-center gap-1 mt-6">
       <button
         onClick={() => onChange(page - 1)}
         disabled={page <= 1}
-        className="px-3 py-1.5 rounded bg-gray-800 border border-gray-700 text-sm text-gray-300 hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+        className="px-2 sm:px-3 py-1.5 rounded bg-gray-800 border border-gray-700 text-sm text-gray-300 hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
       >
         ‹
       </button>
@@ -20,7 +20,7 @@ export default function Pagination({ page, total, limit, onChange }) {
         <>
           <button
             onClick={() => onChange(1)}
-            className="px-3 py-1.5 rounded bg-gray-800 border border-gray-700 text-sm text-gray-300 hover:bg-gray-700"
+            className="px-2 sm:px-3 py-1.5 rounded bg-gray-800 border border-gray-700 text-sm text-gray-300 hover:bg-gray-700"
           >
             1
           </button>
@@ -31,7 +31,7 @@ export default function Pagination({ page, total, limit, onChange }) {
         <button
           key={p}
           onClick={() => onChange(p)}
-          className={`px-3 py-1.5 rounded border text-sm transition-colors ${
+          className={`px-2 sm:px-3 py-1.5 rounded border text-sm transition-colors ${
             p === page
               ? 'bg-purple-600 border-purple-500 text-white'
               : 'bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-700'
@@ -45,7 +45,7 @@ export default function Pagination({ page, total, limit, onChange }) {
           {end < totalPages - 1 && <span className="text-gray-600 px-1">…</span>}
           <button
             onClick={() => onChange(totalPages)}
-            className="px-3 py-1.5 rounded bg-gray-800 border border-gray-700 text-sm text-gray-300 hover:bg-gray-700"
+            className="px-2 sm:px-3 py-1.5 rounded bg-gray-800 border border-gray-700 text-sm text-gray-300 hover:bg-gray-700"
           >
             {totalPages}
           </button>
@@ -54,11 +54,11 @@ export default function Pagination({ page, total, limit, onChange }) {
       <button
         onClick={() => onChange(page + 1)}
         disabled={page >= totalPages}
-        className="px-3 py-1.5 rounded bg-gray-800 border border-gray-700 text-sm text-gray-300 hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+        className="px-2 sm:px-3 py-1.5 rounded bg-gray-800 border border-gray-700 text-sm text-gray-300 hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
       >
         ›
       </button>
-      <span className="ml-2 text-xs text-gray-500">
+      <span className="text-xs text-gray-500 w-full text-center sm:w-auto sm:text-left sm:ml-2">
         {total} items
       </span>
     </div>

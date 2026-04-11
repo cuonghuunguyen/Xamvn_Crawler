@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useCallback, useState } from 'react';
 import { api } from '../api';
 
 export function useCrawl() {
@@ -7,14 +7,14 @@ export function useCrawl() {
   const [error, setError] = useState(null);
   const [crawledUrl, setCrawledUrl] = useState(null);
 
-  const startCrawl = useCallback(async (url) => {
+  const startCrawl = useCallback(async (url, cookie) => {
     setStatus('running');
     setProgress([]);
     setError(null);
     setCrawledUrl(url);
 
     try {
-      const result = await api.crawl(url);
+      const result = await api.crawl(url, cookie);
       if (result.cached) {
         setStatus('done');
         return result;
@@ -43,7 +43,7 @@ export function useCrawl() {
           setError(jobStatus.error || 'Crawl failed');
           return null;
         }
-      } catch (err) {
+      } catch {
         // polling error, keep trying
       }
     }

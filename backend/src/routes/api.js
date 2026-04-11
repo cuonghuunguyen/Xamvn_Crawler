@@ -9,9 +9,12 @@ const crawlJobs = new Map(); // url -> { status, progress, error }
 // POST /api/crawl — start crawling a thread
 router.post('/crawl', async (req, res) => {
   await ready;
-  const { url } = req.body;
+  const { url, cookie } = req.body;
   if (!url || typeof url !== 'string') {
     return res.status(400).json({ error: 'url is required' });
+  }
+  if (cookie != null && typeof cookie !== 'string') {
+    return res.status(400).json({ error: 'cookie must be a string when provided' });
   }
 
   // Normalise URL
@@ -49,7 +52,7 @@ router.post('/crawl', async (req, res) => {
       const result = await crawlThread(normUrl, (msg) => {
         job.progress.push(msg);
         if (job.progress.length > 100) job.progress.shift();
-      });
+      }, { cookie: cookie || undefined });
 
       // Update thread
       await run(

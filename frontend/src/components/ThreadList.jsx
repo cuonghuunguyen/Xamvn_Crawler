@@ -42,7 +42,7 @@ export default function ThreadList({ threads, onSelect, selectedId, onDeleted })
             <div className="text-sm font-medium text-gray-100 truncate">
               {t.title || t.url}
             </div>
-            <div className="text-xs text-gray-500 mt-0.5 flex gap-3">
+            <div className="text-xs text-gray-500 mt-0.5 flex flex-wrap gap-x-3 gap-y-1">
               <a
                 href={t.url}
                 target="_blank"

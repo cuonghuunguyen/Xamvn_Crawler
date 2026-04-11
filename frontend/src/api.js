@@ -13,8 +13,14 @@ async function request(path, options = {}) {
 }
 
 export const api = {
-  crawl: (url) =>
-    request('/crawl', { method: 'POST', body: JSON.stringify({ url }) }),
+  crawl: (url, cookie) =>
+    request('/crawl', {
+      method: 'POST',
+      body: JSON.stringify({
+        url,
+        ...(cookie ? { cookie } : {}),
+      }),
+    }),
 
   crawlStatus: (url) =>
     request(`/crawl/status?url=${encodeURIComponent(url)}`),
