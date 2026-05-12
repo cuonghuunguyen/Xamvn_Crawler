@@ -1,4 +1,4 @@
-const sqlite3 = require('sqlite3').verbose();
+const Database = require('better-sqlite3');
 const path = require('path');
 const fs = require('fs');
 
@@ -6,50 +6,50 @@ const DB_DIR = path.join(__dirname, '..', 'data');
 if (!fs.existsSync(DB_DIR)) fs.mkdirSync(DB_DIR, { recursive: true });
 
 const DB_PATH = path.join(DB_DIR, 'crawler.db');
-const db = new sqlite3.Database(DB_PATH);
+const db = new Database(DB_PATH);
+db.pragma('journal_mode = WAL');
+db.pragma('foreign_keys = ON');
 
-// Promisify helpers
 function run(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    db.run(sql, params, function (err) {
-      if (err) return reject(err);
-      resolve({ lastID: this.lastID, changes: this.changes });
-    });
+  return Promise.resolve().then(() => {
+    const stmt = db.prepare(sql);
+    const result =
+      params && !Array.isArray(params) && typeof params === 'object'
+        ? stmt.run(params)
+        : stmt.run(...params);
+    return {
+      lastID: Number(result.lastInsertRowid ?? 0),
+      changes: result.changes ?? 0,
+    };
   });
 }
 
 function get(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    db.get(sql, params, (err, row) => {
-      if (err) return reject(err);
-      resolve(row);
-    });
+  return Promise.resolve().then(() => {
+    const stmt = db.prepare(sql);
+    return params && !Array.isArray(params) && typeof params === 'object'
+      ? stmt.get(params)
+      : stmt.get(...params);
   });
 }
 
 function all(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    db.all(sql, params, (err, rows) => {
-      if (err) return reject(err);
-      resolve(rows);
-    });
+  return Promise.resolve().then(() => {
+    const stmt = db.prepare(sql);
+    return params && !Array.isArray(params) && typeof params === 'object'
+      ? stmt.all(params)
+      : stmt.all(...params);
   });
 }
 
 function exec(sql) {
-  return new Promise((resolve, reject) => {
-    db.exec(sql, (err) => {
-      if (err) return reject(err);
-      resolve();
-    });
+  return Promise.resolve().then(() => {
+    db.exec(sql);
   });
 }
 
 // Initialize schema
 const ready = exec(`
-  PRAGMA journal_mode = WAL;
-  PRAGMA foreign_keys = ON;
-
   CREATE TABLE IF NOT EXISTS threads (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     url TEXT UNIQUE NOT NULL,
@@ -91,4 +91,3 @@ const ready = exec(`
 `);
 
 module.exports = { db, run, get, all, exec, ready };
-

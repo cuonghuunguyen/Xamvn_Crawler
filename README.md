@@ -20,7 +20,7 @@ A full-stack Node.js + React web app that crawls [xamvn.bond](https://xamvn.bond
 
 | Layer | Tech |
 |-------|------|
-| Backend | Node.js, Express, Cheerio (HTML parsing), Axios, SQLite (`sqlite3`) |
+| Backend | Node.js, Express, Cheerio (HTML parsing), Axios, SQLite (`better-sqlite3`) |
 | Frontend | React 19, Vite, Tailwind CSS v4 |
 | Database | SQLite (file at `backend/data/crawler.db`) |
 
