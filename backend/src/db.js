@@ -7,18 +7,28 @@ if (!fs.existsSync(DB_DIR)) fs.mkdirSync(DB_DIR, { recursive: true });
 
 const DB_PATH = path.join(DB_DIR, 'crawler.db');
 const db = new Database(DB_PATH);
-db.pragma('journal_mode = WAL');
-db.pragma('foreign_keys = ON');
+
+function executeWithParams(stmt, params, method) {
+  if (params && !Array.isArray(params) && typeof params === 'object') {
+    return stmt[method](params);
+  }
+  return stmt[method](...params);
+}
 
 function run(sql, params = []) {
   return Promise.resolve().then(() => {
     const stmt = db.prepare(sql);
-    const result =
-      params && !Array.isArray(params) && typeof params === 'object'
-        ? stmt.run(params)
-        : stmt.run(...params);
+    const result = executeWithParams(stmt, params, 'run');
+    let lastId = result.lastInsertRowid ?? 0;
+    if (
+      typeof lastId === 'bigint' &&
+      lastId <= BigInt(Number.MAX_SAFE_INTEGER) &&
+      lastId >= BigInt(Number.MIN_SAFE_INTEGER)
+    ) {
+      lastId = Number(lastId);
+    }
     return {
-      lastID: Number(result.lastInsertRowid ?? 0),
+      lastID: lastId,
       changes: result.changes ?? 0,
     };
   });
@@ -27,18 +37,14 @@ function run(sql, params = []) {
 function get(sql, params = []) {
   return Promise.resolve().then(() => {
     const stmt = db.prepare(sql);
-    return params && !Array.isArray(params) && typeof params === 'object'
-      ? stmt.get(params)
-      : stmt.get(...params);
+    return executeWithParams(stmt, params, 'get');
   });
 }
 
 function all(sql, params = []) {
   return Promise.resolve().then(() => {
     const stmt = db.prepare(sql);
-    return params && !Array.isArray(params) && typeof params === 'object'
-      ? stmt.all(params)
-      : stmt.all(...params);
+    return executeWithParams(stmt, params, 'all');
   });
 }
 
@@ -49,8 +55,11 @@ function exec(sql) {
 }
 
 // Initialize schema
-const ready = exec(`
-  CREATE TABLE IF NOT EXISTS threads (
+const ready = Promise.resolve().then(() => {
+  db.pragma('journal_mode = WAL');
+  db.pragma('foreign_keys = ON');
+  return exec(`
+    CREATE TABLE IF NOT EXISTS threads (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     url TEXT UNIQUE NOT NULL,
     thread_id TEXT NOT NULL DEFAULT '',
@@ -88,6 +97,7 @@ const ready = exec(`
   CREATE INDEX IF NOT EXISTS idx_media_thread ON media(thread_id);
   CREATE INDEX IF NOT EXISTS idx_media_url ON media(url);
   CREATE INDEX IF NOT EXISTS idx_threads_status ON threads(status);
-`);
+  `);
+});
 
 module.exports = { db, run, get, all, exec, ready };
