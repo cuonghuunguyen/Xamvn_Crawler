@@ -68,6 +68,26 @@ The backend serves `frontend/dist` as static files when `NODE_ENV=production`.
 
 Paste `https://xamvn.bond/threads/91770/` into the input field and click **Crawl**. The sidebar will update with the thread once complete and the media grid will populate with all images and videos found in the thread.
 
+## Deploying to Render (Free Tier)
+
+Render's free tier has a shared CPU (~0.1 vCPU). Use these environment variables to stay within limits:
+
+| Variable | Recommended | Description |
+|----------|-------------|-------------|
+| `CRAWL_CONCURRENCY` | `1` | Max simultaneous crawl jobs (hard-capped at 2 in code) |
+| `CRAWL_MAX_PAGES` | `50` | Max pages crawled per thread (prevents runaway workloads) |
+| `CRAWL_PAGE_DELAY_MS` | `1200` | Milliseconds between page fetches (reduces CPU/network bursts) |
+| `NODE_ENV` | `production` | Enables static-file serving of the frontend build |
+| `FRONTEND_ORIGIN` | your Render URL | CORS allowed origin |
+| `XAMVN_COOKIE` | *(optional)* | Default cookie for Cloudflare bypass |
+
+> **Note:** Increasing `CRAWL_CONCURRENCY` beyond 1 on the free tier is likely to cause
+> request timeouts and CPU throttling. If you need higher throughput, upgrade to a paid instance.
+
+When `CRAWL_CONCURRENCY=1` and multiple users submit crawls simultaneously, the backend
+queues them automatically. The UI shows "Queued #N" while waiting and transitions to
+"Crawling…" once the active slot is free.
+
 ## Troubleshooting 403 (Cloudflare)
 
 If crawl fails with `403` and Cloudflare challenge:
