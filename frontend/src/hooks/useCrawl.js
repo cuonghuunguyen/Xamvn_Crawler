@@ -8,7 +8,7 @@ export function useCrawl() {
   const [crawledUrl, setCrawledUrl] = useState(null);
   const [queuePosition, setQueuePosition] = useState(null);
 
-  const startCrawl = useCallback(async (url, cookie) => {
+  const startCrawl = useCallback(async (url, cookie, { onTick } = {}) => {
     setStatus('running');
     setProgress([]);
     setError(null);
@@ -40,6 +40,7 @@ export function useCrawl() {
       try {
         const jobStatus = await api.crawlStatus(url);
         setProgress(jobStatus.progress || []);
+        if (onTick) onTick();
         if (jobStatus.queuePosition != null) {
           setStatus('queued');
           setQueuePosition(jobStatus.queuePosition);

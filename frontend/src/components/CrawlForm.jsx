@@ -3,7 +3,7 @@ import { useCrawl } from '../hooks/useCrawl';
 
 const COOKIE_STORAGE_KEY = 'xamvn_cookie_header';
 
-export default function CrawlForm({ onDone }) {
+export default function CrawlForm({ onDone, onTick }) {
   const [url, setUrl] = useState('');
   const [cookie, setCookie] = useState('');
   const { status, progress, error, queuePosition, startCrawl } = useCrawl();
@@ -25,7 +25,7 @@ export default function CrawlForm({ onDone }) {
     e.preventDefault();
     const trimmed = url.trim();
     if (!trimmed) return;
-    const result = await startCrawl(trimmed, cookie.trim() || undefined);
+    const result = await startCrawl(trimmed, cookie.trim() || undefined, { onTick });
     if (result && onDone) onDone(trimmed);
   };
 

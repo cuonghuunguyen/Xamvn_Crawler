@@ -6,8 +6,35 @@ const { crawlThread } = require('../crawler');
 // In-memory crawl job status (per thread URL)
 const crawlJobs = new Map(); // url -> { status, progress, error, queuePosition? }
 
+// Persist a batch of posts (and their media) for a given thread row id
+async function savePagePosts(threadRowId, posts) {
+  for (const post of posts) {
+    try {
+      await run(
+        `INSERT OR IGNORE INTO posts (thread_id, post_id, author, content) VALUES (?, ?, ?, ?)`,
+        [threadRowId, post.postId, post.author, post.content]
+      );
+      const postRow = await get(
+        'SELECT id FROM posts WHERE thread_id = ? AND post_id = ?',
+        [threadRowId, post.postId]
+      );
+      const postDbId = postRow ? postRow.id : null;
+
+      for (const m of post.media) {
+        await run(
+          `INSERT OR IGNORE INTO media (thread_id, post_id, url, type, thumbnail, platform, video_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          [threadRowId, postDbId, m.url, m.type, m.thumbnail || null, m.platform || null, m.video_id || null]
+        );
+      }
+    } catch (_) {
+      // skip individual post errors
+    }
+  }
+}
+
 // Job queue — limits concurrent crawls to avoid CPU starvation on Render free tier
-const MAX_CONCURRENT = Math.min(parseInt(process.env.CRAWL_CONCURRENCY || '1', 10), 2);
+const MAX_CONCURRENT = parseInt(process.env.CRAWL_CONCURRENCY || '3', 10);
 let activeCrawls = 0;
 const crawlQueue = []; // [{ normUrl, cookie, job, threadRowIdResolver }]
 
@@ -32,36 +59,14 @@ function runCrawlJob(normUrl, cookie, job, threadRowId) {
       const result = await crawlThread(normUrl, (msg) => {
         job.progress.push(msg);
         if (job.progress.length > 100) job.progress.shift();
-      }, { cookie: cookie || undefined });
+      }, { cookie: cookie || undefined }, async (pagePosts) => {
+        await savePagePosts(threadRowId, pagePosts);
+      });
 
       await run(
         `UPDATE threads SET thread_id = ?, title = ?, page_count = ?, status = 'done', crawled_at = datetime('now') WHERE id = ?`,
         [result.threadId, result.title, result.pageCount, threadRowId]
       );
-
-      for (const post of result.posts) {
-        try {
-          await run(
-            `INSERT OR IGNORE INTO posts (thread_id, post_id, author, content) VALUES (?, ?, ?, ?)`,
-            [threadRowId, post.postId, post.author, post.content]
-          );
-          const postRow = await get(
-            'SELECT id FROM posts WHERE thread_id = ? AND post_id = ?',
-            [threadRowId, post.postId]
-          );
-          const postDbId = postRow ? postRow.id : null;
-
-          for (const m of post.media) {
-            await run(
-              `INSERT OR IGNORE INTO media (thread_id, post_id, url, type, thumbnail, platform, video_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?)`,
-              [threadRowId, postDbId, m.url, m.type, m.thumbnail || null, m.platform || null, m.video_id || null]
-            );
-          }
-        } catch (_) {
-          // skip individual post errors
-        }
-      }
 
       job.status = 'done';
       job.result = { threadId: result.threadId, title: result.title };
@@ -201,7 +206,7 @@ router.get('/media', async (req, res) => {
   await ready;
   const { thread_id, type, search = '', page = 1, limit = 50, platform } = req.query;
 
-  const conditions = ["t.status = 'done'"];
+  const conditions = ["t.status IN ('done', 'running')"];
   const params = [];
 
   if (thread_id) {

@@ -135,7 +135,7 @@ export default function App() {
             </div>
           </div>
           <div className="flex-1">
-            <CrawlForm onDone={handleCrawlDone} />
+            <CrawlForm onDone={handleCrawlDone} onTick={loadMedia} />
           </div>
           <div className="shrink-0">
             <StatsBar stats={stats} />
