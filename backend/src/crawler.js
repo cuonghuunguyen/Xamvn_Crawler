@@ -380,7 +380,7 @@ async function crawlThread(rawUrl, onProgress, options = {}) {
     report(`Page cap reached: crawling ${effectivePageCount} of ${pageCount} pages (CRAWL_MAX_PAGES=${maxPages})`);
   }
 
-  // Configurable inter-page delay (default 1 200 ms — gentle on Render free tier)
+  // Configurable inter-page delay (default 1200 ms — gentle on Render free tier)
   const pageDelay = parseInt(process.env.CRAWL_PAGE_DELAY_MS || '1200', 10);
 
   // Fetch remaining pages

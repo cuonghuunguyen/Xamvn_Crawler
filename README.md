@@ -88,7 +88,7 @@ When `CRAWL_CONCURRENCY=1` and multiple users submit crawls simultaneously, the 
 queues them automatically. The UI shows "Queued #N" while waiting and transitions to
 "Crawling…" once the active slot is free.
 
-
+## Troubleshooting 403 (Cloudflare)
 
 If crawl fails with `403` and Cloudflare challenge:
 

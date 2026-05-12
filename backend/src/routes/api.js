@@ -130,7 +130,7 @@ router.post('/crawl', async (req, res) => {
     });
   }
 
-  res.json({ message: job.status === 'running' ? 'Crawl started' : 'Crawl queued', url: normUrl, queuePosition: job.queuePosition });
+  res.json({ message: job.status === 'running' ? 'Crawl started' : 'Crawl queued', url: normUrl, ...(job.status === 'queued' ? { queuePosition: job.queuePosition } : {}) });
 });
 
 // GET /api/crawl/status?url=... — poll job status
