@@ -4,7 +4,77 @@ const { run, get, all, ready } = require('../db');
 const { crawlThread } = require('../crawler');
 
 // In-memory crawl job status (per thread URL)
-const crawlJobs = new Map(); // url -> { status, progress, error }
+const crawlJobs = new Map(); // url -> { status, progress, error, queuePosition? }
+
+// Job queue — limits concurrent crawls to avoid CPU starvation on Render free tier
+const MAX_CONCURRENT = Math.min(parseInt(process.env.CRAWL_CONCURRENCY || '1', 10), 2);
+let activeCrawls = 0;
+const crawlQueue = []; // [{ normUrl, cookie, job, threadRowIdResolver }]
+
+function dequeueAndRun() {
+  while (activeCrawls < MAX_CONCURRENT && crawlQueue.length > 0) {
+    const next = crawlQueue.shift();
+    // Update queue positions for remaining items
+    crawlQueue.forEach((item, idx) => {
+      item.job.queuePosition = idx + 1;
+    });
+    next.job.queuePosition = null;
+    next.run();
+  }
+}
+
+function runCrawlJob(normUrl, cookie, job, threadRowId) {
+  activeCrawls++;
+  job.status = 'running';
+
+  (async () => {
+    try {
+      const result = await crawlThread(normUrl, (msg) => {
+        job.progress.push(msg);
+        if (job.progress.length > 100) job.progress.shift();
+      }, { cookie: cookie || undefined });
+
+      await run(
+        `UPDATE threads SET thread_id = ?, title = ?, page_count = ?, status = 'done', crawled_at = datetime('now') WHERE id = ?`,
+        [result.threadId, result.title, result.pageCount, threadRowId]
+      );
+
+      for (const post of result.posts) {
+        try {
+          await run(
+            `INSERT OR IGNORE INTO posts (thread_id, post_id, author, content) VALUES (?, ?, ?, ?)`,
+            [threadRowId, post.postId, post.author, post.content]
+          );
+          const postRow = await get(
+            'SELECT id FROM posts WHERE thread_id = ? AND post_id = ?',
+            [threadRowId, post.postId]
+          );
+          const postDbId = postRow ? postRow.id : null;
+
+          for (const m of post.media) {
+            await run(
+              `INSERT OR IGNORE INTO media (thread_id, post_id, url, type, thumbnail, platform, video_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?)`,
+              [threadRowId, postDbId, m.url, m.type, m.thumbnail || null, m.platform || null, m.video_id || null]
+            );
+          }
+        } catch (_) {
+          // skip individual post errors
+        }
+      }
+
+      job.status = 'done';
+      job.result = { threadId: result.threadId, title: result.title };
+    } catch (err) {
+      job.status = 'error';
+      job.error = err.message;
+      await run("UPDATE threads SET status = 'error' WHERE id = ?", [threadRowId]);
+    } finally {
+      activeCrawls--;
+      dequeueAndRun();
+    }
+  })();
+}
 
 // POST /api/crawl — start crawling a thread
 router.post('/crawl', async (req, res) => {
@@ -21,9 +91,9 @@ router.post('/crawl', async (req, res) => {
   let normUrl = url.trim();
   if (!normUrl.startsWith('http')) normUrl = 'https://' + normUrl;
 
-  // Check if already running
+  // Check if already running or queued
   const existing = crawlJobs.get(normUrl);
-  if (existing && existing.status === 'running') {
+  if (existing && (existing.status === 'running' || existing.status === 'queued')) {
     return res.status(409).json({ error: 'Crawl already in progress for this URL', job: existing });
   }
 
@@ -33,8 +103,8 @@ router.post('/crawl', async (req, res) => {
     return res.json({ message: 'Thread already crawled', thread: existingThread, cached: true });
   }
 
-  // Start crawl job
-  const job = { status: 'running', progress: [], error: null };
+  // Create job entry
+  const job = { status: 'queued', progress: [], error: null, queuePosition: null };
   crawlJobs.set(normUrl, job);
 
   // Upsert thread record
@@ -46,55 +116,21 @@ router.post('/crawl', async (req, res) => {
 
   const threadRow = await get('SELECT id FROM threads WHERE url = ?', [normUrl]);
 
-  // Run crawl asynchronously
-  (async () => {
-    try {
-      const result = await crawlThread(normUrl, (msg) => {
-        job.progress.push(msg);
-        if (job.progress.length > 100) job.progress.shift();
-      }, { cookie: cookie || undefined });
+  if (activeCrawls < MAX_CONCURRENT) {
+    // Start immediately
+    runCrawlJob(normUrl, cookie, job, threadRow.id);
+  } else {
+    // Enqueue and report position
+    job.queuePosition = crawlQueue.length + 1;
+    crawlQueue.push({
+      normUrl,
+      cookie,
+      job,
+      run: () => runCrawlJob(normUrl, cookie, job, threadRow.id),
+    });
+  }
 
-      // Update thread
-      await run(
-        `UPDATE threads SET thread_id = ?, title = ?, page_count = ?, status = 'done', crawled_at = datetime('now') WHERE id = ?`,
-        [result.threadId, result.title, result.pageCount, threadRow.id]
-      );
-
-      // Persist posts and media
-      for (const post of result.posts) {
-        try {
-          await run(
-            `INSERT OR IGNORE INTO posts (thread_id, post_id, author, content) VALUES (?, ?, ?, ?)`,
-            [threadRow.id, post.postId, post.author, post.content]
-          );
-          const postRow = await get(
-            'SELECT id FROM posts WHERE thread_id = ? AND post_id = ?',
-            [threadRow.id, post.postId]
-          );
-          const postDbId = postRow ? postRow.id : null;
-
-          for (const m of post.media) {
-            await run(
-              `INSERT OR IGNORE INTO media (thread_id, post_id, url, type, thumbnail, platform, video_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?)`,
-              [threadRow.id, postDbId, m.url, m.type, m.thumbnail || null, m.platform || null, m.video_id || null]
-            );
-          }
-        } catch (_) {
-          // skip individual post errors
-        }
-      }
-
-      job.status = 'done';
-      job.result = { threadId: result.threadId, title: result.title };
-    } catch (err) {
-      job.status = 'error';
-      job.error = err.message;
-      await run("UPDATE threads SET status = 'error' WHERE id = ?", [threadRow.id]);
-    }
-  })();
-
-  res.json({ message: 'Crawl started', url: normUrl });
+  res.json({ message: job.status === 'running' ? 'Crawl started' : 'Crawl queued', url: normUrl, queuePosition: job.queuePosition });
 });
 
 // GET /api/crawl/status?url=... — poll job status
@@ -108,7 +144,13 @@ router.get('/crawl/status', async (req, res) => {
     if (t) return res.json({ status: t.status, progress: [] });
     return res.status(404).json({ error: 'No crawl job found for this URL' });
   }
-  res.json(job);
+  res.json({
+    status: job.status,
+    progress: job.progress || [],
+    error: job.error || null,
+    queuePosition: job.queuePosition ?? null,
+    result: job.result || null,
+  });
 });
 
 // GET /api/threads — list all crawled threads

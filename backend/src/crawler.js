@@ -373,10 +373,20 @@ async function crawlThread(rawUrl, onProgress, options = {}) {
 
   const allPosts = parsePage($1, base);
 
+  // Honour page cap to avoid runaway CPU on free-tier hosts
+  const maxPages = parseInt(process.env.CRAWL_MAX_PAGES || '50', 10);
+  const effectivePageCount = Math.min(pageCount, maxPages);
+  if (effectivePageCount < pageCount) {
+    report(`Page cap reached: crawling ${effectivePageCount} of ${pageCount} pages (CRAWL_MAX_PAGES=${maxPages})`);
+  }
+
+  // Configurable inter-page delay (default 1 200 ms — gentle on Render free tier)
+  const pageDelay = parseInt(process.env.CRAWL_PAGE_DELAY_MS || '1200', 10);
+
   // Fetch remaining pages
-  for (let p = 2; p <= pageCount; p++) {
-    report(`Fetching page ${p}/${pageCount}…`);
-    await sleep(800); // Polite delay
+  for (let p = 2; p <= effectivePageCount; p++) {
+    report(`Fetching page ${p}/${effectivePageCount}…`);
+    await sleep(pageDelay);
     try {
       const html = await fetchHtml(
         client,
@@ -404,7 +414,7 @@ async function crawlThread(rawUrl, onProgress, options = {}) {
     });
   }
 
-  return { threadId, title, pageCount, posts: allPosts };
+  return { threadId, title, pageCount: effectivePageCount, posts: allPosts };
 }
 
 module.exports = { crawlThread, parseThreadUrl };
