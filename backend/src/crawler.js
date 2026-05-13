@@ -178,6 +178,22 @@ async function fetchHtml(client, url, baseUrl, options, report, label) {
   }
 }
 
+// Returns true for URLs that point to icons, smilies, or reaction images
+// rather than actual content images.
+function isIconOrEmojiUrl(url) {
+  return (
+    /\/smilies\//i.test(url) ||
+    /\/data\/smilies\//i.test(url) ||
+    /\bemoji\b/i.test(url) ||
+    /\/emojis?\//i.test(url) ||
+    /\/emoticons?\//i.test(url) ||
+    /\/reactions?\//i.test(url) ||
+    /reaction_sprite/i.test(url) ||
+    /spritesheet/i.test(url) ||
+    /\/icons?\//i.test(url)
+  );
+}
+
 // Extract media (images + videos) from a cheerio-loaded page
 function extractMedia($, baseUrl) {
   const media = [];
@@ -192,9 +208,18 @@ function extractMedia($, baseUrl) {
 
   // --- Images ---
   // XenForo img tags inside post content
-  $('article .bbWrapper img, .message-body img, .post-body img, .bbWrapper img').each((_, el) => {
+  $('article .bbWrapper img, .message-body img, .post-body img, img').each((_, el) => {
     const src = $(el).attr('data-src') || $(el).attr('src') || '';
     if (!src) return;
+    // Skip smilie / reaction / icon elements by class or attribute
+    if (
+      $(el).attr('data-smilie') ||
+      $(el).hasClass('smilie') ||
+      $(el).hasClass('smilieText') ||
+      $(el).hasClass('reaction-image') ||
+      $(el).hasClass('smilieSprite') ||
+      $(el).hasClass('mceSmilieSprite')
+    ) return;
     // Resolve relative URLs
     let absUrl = src;
     try {
@@ -204,8 +229,8 @@ function extractMedia($, baseUrl) {
     const width = parseInt($(el).attr('width') || '9999', 10);
     const height = parseInt($(el).attr('height') || '9999', 10);
     if (width < 80 || height < 80) return;
-    // Skip smileys
-    if (absUrl.includes('/smilies/') || absUrl.includes('emoji')) return;
+    // Skip smileys and icon URLs
+    if (isIconOrEmojiUrl(absUrl)) return;
     addMedia(absUrl, 'image');
   });
 
@@ -215,6 +240,7 @@ function extractMedia($, baseUrl) {
     if (href.match(/\.(jpg|jpeg|png|gif|webp|bmp)(\?|$)/i)) {
       let absUrl = href;
       try { absUrl = new URL(href, baseUrl).href; } catch (_) {}
+      if (isIconOrEmojiUrl(absUrl)) return;
       addMedia(absUrl, 'image');
     }
   });
