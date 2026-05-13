@@ -3,6 +3,8 @@ import { useCrawl } from '../hooks/useCrawl';
 
 const COOKIE_STORAGE_KEY = 'xamvn_cookie_header';
 const DEFAULT_PARALLEL = 3;
+const MAX_PARALLEL = 10;
+const MAX_PAGE_DELAY_MS = 60000;
 
 export default function CrawlForm({ onDone, onTick }) {
   const [url, setUrl] = useState('');
@@ -33,9 +35,13 @@ export default function CrawlForm({ onDone, onTick }) {
     const parsedMaxPages = maxPages.trim() ? Number.parseInt(maxPages, 10) : null;
     const parsedPageDelayMs = pageDelayMs.trim() ? Number.parseInt(pageDelayMs, 10) : null;
     const crawlOptions = {
-      parallel: Number.isInteger(parsedParallel) && parsedParallel > 0 ? parsedParallel : DEFAULT_PARALLEL,
+      parallel: Number.isInteger(parsedParallel) && parsedParallel > 0 && parsedParallel <= MAX_PARALLEL
+        ? parsedParallel
+        : DEFAULT_PARALLEL,
       ...(Number.isInteger(parsedMaxPages) && parsedMaxPages > 0 ? { maxPages: parsedMaxPages } : {}),
-      ...(Number.isInteger(parsedPageDelayMs) && parsedPageDelayMs >= 0 ? { pageDelayMs: parsedPageDelayMs } : {}),
+      ...(Number.isInteger(parsedPageDelayMs) && parsedPageDelayMs >= 0 && parsedPageDelayMs <= MAX_PAGE_DELAY_MS
+        ? { pageDelayMs: parsedPageDelayMs }
+        : {}),
     };
     const result = await startCrawl(trimmed, cookie.trim() || undefined, { onTick, crawlOptions });
     if (result && onDone) onDone(trimmed);

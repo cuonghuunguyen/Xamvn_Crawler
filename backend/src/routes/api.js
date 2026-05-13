@@ -356,8 +356,6 @@ router.post('/crawl', async (req, res) => {
     });
   }
 
-  if (activeCrawls < effectiveParallel) dequeueAndRun();
-
   res.json({ message: job.status === 'running' ? 'Crawl started' : 'Crawl queued', url: normUrl, ...(job.status === 'queued' ? { queuePosition: job.queuePosition } : {}) });
 });
 
