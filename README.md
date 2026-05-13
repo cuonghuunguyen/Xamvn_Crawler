@@ -62,7 +62,7 @@ The backend serves `frontend/dist` as static files when `NODE_ENV=production`.
 | `GET` | `/api/threads` | List crawled threads (`page`, `limit`, `search`) |
 | `DELETE` | `/api/threads/:id` | Delete thread + all media |
 | `GET` | `/api/media` | Get media (`type`, `thread_id`, `platform`, `search`, `page`, `limit`) |
-| `GET` | `/api/media/proxy?url=` | Stream remote video through backend proxy for restrictive CORS hosts |
+| `GET` | `/api/media/proxy?media_id=` | Stream stored remote video through backend proxy for restrictive CORS hosts |
 | `GET` | `/api/stats` | Aggregate counts |
 
 ## Example
@@ -81,7 +81,7 @@ Render's free tier has a shared CPU (~0.1 vCPU). Use these environment variables
 | `NODE_ENV` | `production` | Enables static-file serving of the frontend build |
 | `FRONTEND_ORIGIN` | your Render URL | CORS allowed origin |
 | `XAMVN_COOKIE` | *(optional)* | Default cookie for Cloudflare bypass |
-| `MEDIA_PROXY_ALLOWLIST` | *(optional)* | Comma-separated host/domain allowlist for `/api/media/proxy` |
+| `MEDIA_PROXY_ALLOWLIST` | *(optional)* | Comma-separated extra host/domain allowlist for `/api/media/proxy` (default includes `files.catbox.moe`) |
 | `MEDIA_PROXY_TIMEOUT_MS` | `15000` | Upstream timeout for video proxy requests |
 
 > **Note:** Increasing `CRAWL_CONCURRENCY` beyond 1 on the free tier is likely to cause

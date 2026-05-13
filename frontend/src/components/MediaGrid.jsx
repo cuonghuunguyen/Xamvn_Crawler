@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api } from '../api';
 
 function ImageCard({ item }) {
@@ -84,7 +84,7 @@ function VideoModal({ item, onClose }) {
     item.embed_url ||
     (item.video_id ? `https://www.youtube.com/embed/${item.video_id}` : null);
   const iframeUrl = item.embed_url || item.url;
-  const proxyUrl = item.proxy_url || api.getMediaProxyUrl(item.url);
+  const proxyUrl = item.proxy_url || (item.id ? api.getMediaProxyUrl(item.id) : null);
 
   const onVideoError = () => {
     if (!usingProxy && proxyUrl) {
@@ -95,11 +95,29 @@ function VideoModal({ item, onClose }) {
     setPlaybackFailed(true);
   };
 
+  useEffect(() => {
+    const onKeyDown = (e) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [onClose]);
+
   return (
-    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm p-4 flex items-center justify-center">
+    <div
+      className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm p-4 flex items-center justify-center"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby={`video-modal-title-${item.id}`}
+    >
       <div className="w-full max-w-5xl rounded-xl overflow-hidden border border-gray-700 bg-gray-900">
         <div className="flex items-center justify-between px-4 py-2 border-b border-gray-800">
-          <div className="text-sm text-gray-300 truncate mr-3">{item.thread_title || 'Video'}</div>
+          <div id={`video-modal-title-${item.id}`} className="text-sm text-gray-300 truncate mr-3">
+            {item.thread_title || 'Video'}
+          </div>
           <button
             type="button"
             onClick={onClose}
@@ -192,7 +210,7 @@ export default function MediaGrid({ media, type }) {
         )}
       </div>
       {selectedVideo && (
-        <VideoModal item={selectedVideo} onClose={() => setSelectedVideo(null)} />
+        <VideoModal key={selectedVideo.id} item={selectedVideo} onClose={() => setSelectedVideo(null)} />
       )}
     </>
   );

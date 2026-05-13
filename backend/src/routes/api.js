@@ -10,6 +10,21 @@ const net = require('net');
 const crawlJobs = new Map(); // url -> { status, progress, error, queuePosition? }
 
 const DIRECT_VIDEO_PATTERN = /\.(mp4|webm|ogg|m3u8|mov|m4v)(\?|#|$)/i;
+const DEFAULT_MEDIA_PROXY_ALLOWLIST = ['files.catbox.moe'];
+const MAX_MEDIA_PROXY_TIMEOUT_MS = 60000;
+const MEDIA_PROXY_TIMEOUT_MS = (() => {
+  const timeoutRaw = parseInt(process.env.MEDIA_PROXY_TIMEOUT_MS || '15000', 10);
+  return Number.isFinite(timeoutRaw)
+    ? Math.min(Math.max(timeoutRaw, 1000), MAX_MEDIA_PROXY_TIMEOUT_MS)
+    : 15000;
+})();
+const MEDIA_PROXY_ALLOWLIST = (() => {
+  const configured = String(process.env.MEDIA_PROXY_ALLOWLIST || '')
+    .split(',')
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+  return [...new Set([...DEFAULT_MEDIA_PROXY_ALLOWLIST, ...configured])];
+})();
 
 function isDirectVideoUrl(url) {
   return DIRECT_VIDEO_PATTERN.test(url || '');
@@ -17,7 +32,7 @@ function isDirectVideoUrl(url) {
 
 function normalizeVideoMedia(item) {
   const safeUrl = item.url || '';
-  const proxyUrl = `/api/media/proxy?url=${encodeURIComponent(safeUrl)}`;
+  const proxyUrl = item.id ? `/api/media/proxy?media_id=${item.id}` : null;
   const isYoutube = item.platform === 'youtube' && item.video_id;
   const isIframePlatform = ['streamable', 'adult'].includes(item.platform);
   const direct = item.platform === 'direct' || item.platform === 'catbox' || isDirectVideoUrl(safeUrl);
@@ -83,19 +98,23 @@ function isPrivateIPv4(ip) {
 
 function isPrivateIPv6(ip) {
   const normalized = String(ip || '').toLowerCase();
-  if (!normalized) return false;
-  if (normalized === '::1') return true;
-  if (normalized.startsWith('fc') || normalized.startsWith('fd')) return true; // fc00::/7
-  if (
-    normalized.startsWith('fe8') ||
-    normalized.startsWith('fe9') ||
-    normalized.startsWith('fea') ||
-    normalized.startsWith('feb')
-  ) {
-    return true; // fe80::/10
-  }
-  if (normalized.startsWith('::ffff:')) {
-    const v4 = normalized.slice(7);
+  if (net.isIP(normalized) !== 6) return false;
+  const expanded = expandIpv6(normalized);
+  if (!expanded) return false;
+
+  if (expanded.value === 1n) return true; // ::1
+  if ((expanded.value >> 121n) === 0x7en) return true; // fc00::/7
+  if ((expanded.value >> 118n) === 0x3fan) return true; // fe80::/10
+
+  const mappedPrefix = expanded.value >> 32n;
+  if (mappedPrefix === 0xffffn) {
+    const v4Int = Number(expanded.value & 0xffffffffn);
+    const v4 = [
+      (v4Int >>> 24) & 255,
+      (v4Int >>> 16) & 255,
+      (v4Int >>> 8) & 255,
+      v4Int & 255,
+    ].join('.');
     if (net.isIP(v4) === 4) return isPrivateIPv4(v4);
   }
   return false;
@@ -120,23 +139,68 @@ function isBlockedHostname(hostname) {
 }
 
 function isAllowedByAllowlist(hostname) {
-  const raw = process.env.MEDIA_PROXY_ALLOWLIST || '';
-  const allowlist = raw
-    .split(',')
-    .map((s) => s.trim().toLowerCase())
-    .filter(Boolean);
-
-  if (allowlist.length === 0) return true;
-
   const h = String(hostname || '').toLowerCase();
-  return allowlist.some((entry) => h === entry || h.endsWith(`.${entry}`));
+  return MEDIA_PROXY_ALLOWLIST.some((entry) => h === entry || h.endsWith(`.${entry}`));
 }
 
-function isVideoLike(contentType, url) {
+function isVideoLike(contentType) {
   const type = String(contentType || '').toLowerCase();
   if (type.startsWith('video/')) return true;
-  if (type.includes('application/octet-stream') && isDirectVideoUrl(url)) return true;
   return false;
+}
+
+function cleanupStream(stream) {
+  if (!stream) return;
+  if (typeof stream.unpipe === 'function') stream.unpipe();
+  if (typeof stream.destroy === 'function') stream.destroy();
+}
+
+function normalizeIpv4MappedSegment(seg) {
+  if (!seg || !seg.includes('.')) return [seg];
+  if (net.isIP(seg) !== 4) return null;
+  const parts = seg.split('.').map((n) => parseInt(n, 10));
+  const high = ((parts[0] << 8) | parts[1]).toString(16);
+  const low = ((parts[2] << 8) | parts[3]).toString(16);
+  return [high, low];
+}
+
+function expandIpv6(input) {
+  const raw = String(input || '').split('%')[0];
+  const parts = raw.split('::');
+  if (parts.length > 2) return null;
+
+  const leftRaw = parts[0] ? parts[0].split(':').filter(Boolean) : [];
+  const rightRaw = parts[1] ? parts[1].split(':').filter(Boolean) : [];
+
+  const left = [];
+  for (const seg of leftRaw) {
+    const mapped = normalizeIpv4MappedSegment(seg);
+    if (!mapped) return null;
+    left.push(...mapped);
+  }
+
+  const right = [];
+  for (const seg of rightRaw) {
+    const mapped = normalizeIpv4MappedSegment(seg);
+    if (!mapped) return null;
+    right.push(...mapped);
+  }
+
+  const hasCompressed = parts.length === 2;
+  const zerosToInsert = hasCompressed ? 8 - (left.length + right.length) : 0;
+  if (zerosToInsert < 0) return null;
+
+  const hextets = hasCompressed
+    ? [...left, ...Array(zerosToInsert).fill('0'), ...right]
+    : [...left, ...right];
+  if (hextets.length !== 8) return null;
+
+  let value = 0n;
+  for (const h of hextets) {
+    if (!/^[0-9a-f]{1,4}$/i.test(h)) return null;
+    value = (value << 16n) + BigInt(parseInt(h, 16));
+  }
+  return { value };
 }
 
 // Persist a batch of posts (and their media) for a given thread row id
@@ -381,18 +445,25 @@ router.get('/media', async (req, res) => {
   res.json({ media: normalizedMedia, total: countRow.cnt, page: parseInt(page), limit: parseInt(limit) });
 });
 
-// GET /api/media/proxy?url=... — stream remote video through backend for restrictive CORS hosts
+// GET /api/media/proxy?media_id=... — stream stored remote video through backend for restrictive CORS hosts
 router.get('/media/proxy', async (req, res) => {
-  const { url } = req.query;
-  if (!url || typeof url !== 'string') {
-    return res.status(400).json({ error: 'url query param required' });
+  await ready;
+
+  const mediaId = parseInt(req.query.media_id, 10);
+  if (!Number.isInteger(mediaId) || mediaId <= 0) {
+    return res.status(400).json({ error: 'media_id query param required' });
+  }
+
+  const mediaRow = await get('SELECT id, url, type FROM media WHERE id = ?', [mediaId]);
+  if (!mediaRow || mediaRow.type !== 'video') {
+    return res.status(404).json({ error: 'Video media not found' });
   }
 
   let target;
   try {
-    target = new URL(url);
+    target = new URL(mediaRow.url);
   } catch (_) {
-    return res.status(400).json({ error: 'Invalid URL' });
+    return res.status(400).json({ error: 'Stored media URL is invalid' });
   }
 
   if (!['http:', 'https:'].includes(target.protocol)) {
@@ -420,10 +491,9 @@ router.get('/media/proxy', async (req, res) => {
   }
 
   try {
-    const timeout = parseInt(process.env.MEDIA_PROXY_TIMEOUT_MS || '15000', 10);
     const upstream = await axios.get(target.href, {
       responseType: 'stream',
-      timeout,
+      timeout: MEDIA_PROXY_TIMEOUT_MS,
       maxRedirects: 3,
       validateStatus: () => true,
       headers: {
@@ -433,13 +503,13 @@ router.get('/media/proxy', async (req, res) => {
     });
 
     if (upstream.status >= 400) {
-      if (upstream.data && upstream.data.destroy) upstream.data.destroy();
+      cleanupStream(upstream.data);
       return res.status(upstream.status).json({ error: `Upstream returned HTTP ${upstream.status}` });
     }
 
     const contentType = upstream.headers['content-type'] || 'application/octet-stream';
-    if (!isVideoLike(contentType, target.href)) {
-      if (upstream.data && upstream.data.destroy) upstream.data.destroy();
+    if (!isVideoLike(contentType)) {
+      cleanupStream(upstream.data);
       return res.status(415).json({ error: 'Upstream content is not a supported video type' });
     }
 
@@ -458,9 +528,11 @@ router.get('/media/proxy', async (req, res) => {
     }
     res.setHeader('Cache-Control', 'public, max-age=300');
 
-    upstream.data.on('error', () => {
-      if (!res.headersSent) res.status(502).end();
-      else res.end();
+    upstream.data.on('error', (streamErr) => {
+      console.error('Media proxy upstream stream error:', streamErr.message);
+      cleanupStream(upstream.data);
+      if (!res.headersSent) return res.status(502).end();
+      if (!res.writableEnded) res.end();
     });
     res.status(upstream.status);
     upstream.data.pipe(res);
