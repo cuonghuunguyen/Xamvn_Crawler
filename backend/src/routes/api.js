@@ -230,13 +230,14 @@ async function savePagePosts(threadRowId, posts) {
   }
 }
 
-// Job queue — limits concurrent crawls to avoid CPU starvation on Render free tier
-const MAX_CONCURRENT = parseInt(process.env.CRAWL_CONCURRENCY || '3', 10);
+const DEFAULT_CRAWL_PARALLEL = 3;
+const MAX_CRAWL_PARALLEL = 10;
 let activeCrawls = 0;
-const crawlQueue = []; // [{ normUrl, cookie, job, threadRowIdResolver }]
+let schedulerParallel = DEFAULT_CRAWL_PARALLEL;
+const crawlQueue = []; // [{ normUrl, cookie, job, run }]
 
 function dequeueAndRun() {
-  while (activeCrawls < MAX_CONCURRENT && crawlQueue.length > 0) {
+  while (activeCrawls < schedulerParallel && crawlQueue.length > 0) {
     const next = crawlQueue.shift();
     // Update queue positions for remaining items
     crawlQueue.forEach((item, idx) => {
@@ -247,16 +248,21 @@ function dequeueAndRun() {
   }
 }
 
-function runCrawlJob(normUrl, cookie, job, threadRowId) {
+function runCrawlJob(normUrl, cookie, job, threadRowId, crawlOptions = {}) {
   activeCrawls++;
   job.status = 'running';
 
   (async () => {
     try {
+      const options = {
+        ...(cookie ? { cookie } : {}),
+        ...(Number.isInteger(crawlOptions.maxPages) ? { maxPages: crawlOptions.maxPages } : {}),
+        ...(Number.isInteger(crawlOptions.pageDelayMs) ? { pageDelayMs: crawlOptions.pageDelayMs } : {}),
+      };
       const result = await crawlThread(normUrl, (msg) => {
         job.progress.push(msg);
         if (job.progress.length > 100) job.progress.shift();
-      }, { cookie: cookie || undefined }, async (pagePosts) => {
+      }, options, async (pagePosts) => {
         await savePagePosts(threadRowId, pagePosts);
       });
 
@@ -281,13 +287,25 @@ function runCrawlJob(normUrl, cookie, job, threadRowId) {
 // POST /api/crawl — start crawling a thread
 router.post('/crawl', async (req, res) => {
   await ready;
-  const { url, cookie } = req.body;
+  const { url, cookie, parallel, maxPages, pageDelayMs } = req.body;
   if (!url || typeof url !== 'string') {
     return res.status(400).json({ error: 'url is required' });
   }
   if (cookie != null && typeof cookie !== 'string') {
     return res.status(400).json({ error: 'cookie must be a string when provided' });
   }
+  if (parallel != null && (!Number.isInteger(parallel) || parallel < 1 || parallel > MAX_CRAWL_PARALLEL)) {
+    return res.status(400).json({ error: `parallel must be an integer between 1 and ${MAX_CRAWL_PARALLEL}` });
+  }
+  if (maxPages != null && (!Number.isInteger(maxPages) || maxPages < 1)) {
+    return res.status(400).json({ error: 'maxPages must be a positive integer when provided' });
+  }
+  if (pageDelayMs != null && (!Number.isInteger(pageDelayMs) || pageDelayMs < 0 || pageDelayMs > 60000)) {
+    return res.status(400).json({ error: 'pageDelayMs must be an integer between 0 and 60000 when provided' });
+  }
+
+  const effectiveParallel = parallel ?? DEFAULT_CRAWL_PARALLEL;
+  schedulerParallel = effectiveParallel;
 
   // Normalise URL
   let normUrl = url.trim();
@@ -318,9 +336,14 @@ router.post('/crawl', async (req, res) => {
 
   const threadRow = await get('SELECT id FROM threads WHERE url = ?', [normUrl]);
 
-  if (activeCrawls < MAX_CONCURRENT) {
+  const crawlOptions = {
+    ...(maxPages != null ? { maxPages } : {}),
+    ...(pageDelayMs != null ? { pageDelayMs } : {}),
+  };
+
+  if (activeCrawls < schedulerParallel) {
     // Start immediately
-    runCrawlJob(normUrl, cookie, job, threadRow.id);
+    runCrawlJob(normUrl, cookie, job, threadRow.id, crawlOptions);
   } else {
     // Enqueue and report position
     job.queuePosition = crawlQueue.length + 1;
@@ -328,7 +351,7 @@ router.post('/crawl', async (req, res) => {
       normUrl,
       cookie,
       job,
-      run: () => runCrawlJob(normUrl, cookie, job, threadRow.id),
+      run: () => runCrawlJob(normUrl, cookie, job, threadRow.id, crawlOptions),
     });
   }
 

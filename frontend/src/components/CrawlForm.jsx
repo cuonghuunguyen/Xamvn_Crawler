@@ -2,10 +2,16 @@ import { useEffect, useState } from 'react';
 import { useCrawl } from '../hooks/useCrawl';
 
 const COOKIE_STORAGE_KEY = 'xamvn_cookie_header';
+const DEFAULT_PARALLEL = 3;
+const MAX_PARALLEL = 10;
+const MAX_PAGE_DELAY_MS = 60000;
 
 export default function CrawlForm({ onDone, onTick }) {
   const [url, setUrl] = useState('');
   const [cookie, setCookie] = useState('');
+  const [parallel, setParallel] = useState('');
+  const [maxPages, setMaxPages] = useState('');
+  const [pageDelayMs, setPageDelayMs] = useState('');
   const { status, progress, error, queuePosition, startCrawl } = useCrawl();
 
   useEffect(() => {
@@ -25,7 +31,19 @@ export default function CrawlForm({ onDone, onTick }) {
     e.preventDefault();
     const trimmed = url.trim();
     if (!trimmed) return;
-    const result = await startCrawl(trimmed, cookie.trim() || undefined, { onTick });
+    const parsedParallel = Number.parseInt(parallel, 10);
+    const parsedMaxPages = maxPages.trim() ? Number.parseInt(maxPages, 10) : null;
+    const parsedPageDelayMs = pageDelayMs.trim() ? Number.parseInt(pageDelayMs, 10) : null;
+    const crawlOptions = {
+      parallel: Number.isInteger(parsedParallel) && parsedParallel > 0 && parsedParallel <= MAX_PARALLEL
+        ? parsedParallel
+        : DEFAULT_PARALLEL,
+      ...(Number.isInteger(parsedMaxPages) && parsedMaxPages > 0 ? { maxPages: parsedMaxPages } : {}),
+      ...(Number.isInteger(parsedPageDelayMs) && parsedPageDelayMs >= 0 && parsedPageDelayMs <= MAX_PAGE_DELAY_MS
+        ? { pageDelayMs: parsedPageDelayMs }
+        : {}),
+    };
+    const result = await startCrawl(trimmed, cookie.trim() || undefined, { onTick, crawlOptions });
     if (result && onDone) onDone(trimmed);
   };
 
@@ -62,6 +80,41 @@ export default function CrawlForm({ onDone, onTick }) {
           disabled={isActive}
           className="w-full rounded-lg px-4 py-2 bg-gray-800 border border-gray-600 text-gray-100 placeholder-gray-500 focus:outline-none focus:border-purple-500 text-xs"
         />
+
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+          <input
+            type="number"
+            min="1"
+            max="10"
+            value={parallel}
+            onChange={(e) => setParallel(e.target.value)}
+            disabled={isActive}
+            aria-label="Parallel crawl jobs"
+            placeholder="Parallel (default 3)"
+            className="w-full rounded-lg px-4 py-2 bg-gray-800 border border-gray-600 text-gray-100 placeholder-gray-500 focus:outline-none focus:border-purple-500 text-xs"
+          />
+          <input
+            type="number"
+            min="1"
+            value={maxPages}
+            onChange={(e) => setMaxPages(e.target.value)}
+            disabled={isActive}
+            aria-label="Page cap"
+            placeholder="Page cap (optional)"
+            className="w-full rounded-lg px-4 py-2 bg-gray-800 border border-gray-600 text-gray-100 placeholder-gray-500 focus:outline-none focus:border-purple-500 text-xs"
+          />
+          <input
+            type="number"
+            min="0"
+            max="60000"
+            value={pageDelayMs}
+            onChange={(e) => setPageDelayMs(e.target.value)}
+            disabled={isActive}
+            aria-label="Page delay in milliseconds"
+            placeholder="Page delay ms (optional)"
+            className="w-full rounded-lg px-4 py-2 bg-gray-800 border border-gray-600 text-gray-100 placeholder-gray-500 focus:outline-none focus:border-purple-500 text-xs"
+          />
+        </div>
 
         <details className="text-xs text-gray-400">
           <summary className="cursor-pointer select-none">How to copy Cookie from browser</summary>

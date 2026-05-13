@@ -14,12 +14,15 @@ async function request(path, options = {}) {
 }
 
 export const api = {
-  crawl: (url, cookie) =>
+  crawl: (url, cookie, crawlOptions = {}) =>
     request('/crawl', {
       method: 'POST',
       body: JSON.stringify({
         url,
         ...(cookie ? { cookie } : {}),
+        ...(crawlOptions.parallel != null ? { parallel: crawlOptions.parallel } : {}),
+        ...(crawlOptions.maxPages != null ? { maxPages: crawlOptions.maxPages } : {}),
+        ...(crawlOptions.pageDelayMs != null ? { pageDelayMs: crawlOptions.pageDelayMs } : {}),
       }),
     }),
 
