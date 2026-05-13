@@ -342,7 +342,7 @@ function getTitle($) {
 }
 
 // Main crawl function
-async function crawlThread(rawUrl, onProgress, options = {}) {
+async function crawlThread(rawUrl, onProgress, options = {}, onPage = null) {
   const { threadId, base } = parseThreadUrl(rawUrl);
   const client = buildClient(base, options);
   const report = (msg) => onProgress && onProgress(msg);
@@ -372,6 +372,7 @@ async function crawlThread(rawUrl, onProgress, options = {}) {
   report(`Title: "${title}" | Pages: ${pageCount}`);
 
   const allPosts = parsePage($1, base);
+  if (onPage) await onPage(allPosts, 1);
 
   // Honour page cap to avoid runaway CPU on free-tier hosts
   const maxPages = parseInt(process.env.CRAWL_MAX_PAGES || '50', 10);
@@ -399,6 +400,7 @@ async function crawlThread(rawUrl, onProgress, options = {}) {
       const $p = cheerio.load(html);
       const pagePosts = parsePage($p, base);
       allPosts.push(...pagePosts);
+      if (onPage) await onPage(pagePosts, p);
     } catch (err) {
       report(`Warning: failed to fetch page ${p}: ${err.message}`);
     }
