@@ -57,7 +57,7 @@ The backend serves `frontend/dist` as static files when `NODE_ENV=production`.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/api/crawl` | Start crawling `{ url }` |
+| `POST` | `/api/crawl` | Start crawling `{ url, cookie?, parallel?, maxPages?, pageDelayMs? }` |
 | `GET` | `/api/crawl/status?url=` | Poll crawl job status |
 | `GET` | `/api/threads` | List crawled threads (`page`, `limit`, `search`) |
 | `DELETE` | `/api/threads/:id` | Delete thread + all media |
@@ -71,25 +71,22 @@ Paste `https://xamvn.bond/threads/91770/` into the input field and click **Crawl
 
 ## Deploying to Render (Free Tier)
 
-Render's free tier has a shared CPU (~0.1 vCPU). Use these environment variables to stay within limits:
+Render's free tier has a shared CPU (~0.1 vCPU). Use these environment variables:
 
 | Variable | Recommended | Description |
 |----------|-------------|-------------|
-| `CRAWL_CONCURRENCY` | `1` | Max simultaneous crawl jobs (hard-capped at 2 in code) |
-| `CRAWL_MAX_PAGES` | `50` | Max pages crawled per thread (prevents runaway workloads) |
-| `CRAWL_PAGE_DELAY_MS` | `1200` | Milliseconds between page fetches (reduces CPU/network bursts) |
 | `NODE_ENV` | `production` | Enables static-file serving of the frontend build |
 | `FRONTEND_ORIGIN` | your Render URL | CORS allowed origin |
 | `XAMVN_COOKIE` | *(optional)* | Default cookie for Cloudflare bypass |
 | `MEDIA_PROXY_ALLOWLIST` | *(optional)* | Comma-separated extra host/domain allowlist for `/api/media/proxy` (default includes `files.catbox.moe`) |
 | `MEDIA_PROXY_TIMEOUT_MS` | `15000` | Upstream timeout for video proxy requests |
 
-> **Note:** Increasing `CRAWL_CONCURRENCY` beyond 1 on the free tier is likely to cause
-> request timeouts and CPU throttling. If you need higher throughput, upgrade to a paid instance.
-
-When `CRAWL_CONCURRENCY=1` and multiple users submit crawls simultaneously, the backend
-queues them automatically. The UI shows "Queued #N" while waiting and transitions to
-"Crawling…" once the active slot is free.
+> Crawl behavior is now configured from the UI per job:
+> - **Parallel** defaults to `3`
+> - **Page cap** is optional (unset by default)
+> - **Page delay (ms)** is optional (unset by default)
+>
+> The backend still queues jobs when active crawls reach the configured parallel limit.
 
 ## Troubleshooting 403 (Cloudflare)
 
