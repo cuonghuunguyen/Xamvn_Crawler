@@ -9,7 +9,7 @@ const MAX_PAGE_DELAY_MS = 60000;
 export default function CrawlForm({ onDone, onTick }) {
   const [url, setUrl] = useState('');
   const [cookie, setCookie] = useState('');
-  const [parallel, setParallel] = useState(String(DEFAULT_PARALLEL));
+  const [parallel, setParallel] = useState('');
   const [maxPages, setMaxPages] = useState('');
   const [pageDelayMs, setPageDelayMs] = useState('');
   const { status, progress, error, queuePosition, startCrawl } = useCrawl();

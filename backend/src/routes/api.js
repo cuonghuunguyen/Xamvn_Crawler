@@ -233,13 +233,12 @@ async function savePagePosts(threadRowId, posts) {
 const DEFAULT_CRAWL_PARALLEL = 3;
 const MAX_CRAWL_PARALLEL = 10;
 let activeCrawls = 0;
-const crawlQueue = []; // [{ normUrl, cookie, job, run, parallel }]
+let schedulerParallel = DEFAULT_CRAWL_PARALLEL;
+const crawlQueue = []; // [{ normUrl, cookie, job, run }]
 
 function dequeueAndRun() {
-  while (crawlQueue.length > 0) {
-    const runnableIndex = crawlQueue.findIndex((item) => activeCrawls < item.parallel);
-    if (runnableIndex === -1) break;
-    const [next] = crawlQueue.splice(runnableIndex, 1);
+  while (activeCrawls < schedulerParallel && crawlQueue.length > 0) {
+    const next = crawlQueue.shift();
     // Update queue positions for remaining items
     crawlQueue.forEach((item, idx) => {
       item.job.queuePosition = idx + 1;
@@ -306,6 +305,7 @@ router.post('/crawl', async (req, res) => {
   }
 
   const effectiveParallel = parallel ?? DEFAULT_CRAWL_PARALLEL;
+  schedulerParallel = effectiveParallel;
 
   // Normalise URL
   let normUrl = url.trim();
@@ -341,7 +341,7 @@ router.post('/crawl', async (req, res) => {
     ...(pageDelayMs != null ? { pageDelayMs } : {}),
   };
 
-  if (activeCrawls < effectiveParallel) {
+  if (activeCrawls < schedulerParallel) {
     // Start immediately
     runCrawlJob(normUrl, cookie, job, threadRow.id, crawlOptions);
   } else {
@@ -351,7 +351,6 @@ router.post('/crawl', async (req, res) => {
       normUrl,
       cookie,
       job,
-      parallel: effectiveParallel,
       run: () => runCrawlJob(normUrl, cookie, job, threadRow.id, crawlOptions),
     });
   }
