@@ -89,6 +89,7 @@ export default function CrawlForm({ onDone, onTick }) {
             value={parallel}
             onChange={(e) => setParallel(e.target.value)}
             disabled={isActive}
+            aria-label="Parallel crawl jobs"
             placeholder="Parallel (default 3)"
             className="w-full rounded-lg px-4 py-2 bg-gray-800 border border-gray-600 text-gray-100 placeholder-gray-500 focus:outline-none focus:border-purple-500 text-xs"
           />
@@ -98,6 +99,7 @@ export default function CrawlForm({ onDone, onTick }) {
             value={maxPages}
             onChange={(e) => setMaxPages(e.target.value)}
             disabled={isActive}
+            aria-label="Page cap"
             placeholder="Page cap (optional)"
             className="w-full rounded-lg px-4 py-2 bg-gray-800 border border-gray-600 text-gray-100 placeholder-gray-500 focus:outline-none focus:border-purple-500 text-xs"
           />
@@ -108,6 +110,7 @@ export default function CrawlForm({ onDone, onTick }) {
             value={pageDelayMs}
             onChange={(e) => setPageDelayMs(e.target.value)}
             disabled={isActive}
+            aria-label="Page delay in milliseconds"
             placeholder="Page delay ms (optional)"
             className="w-full rounded-lg px-4 py-2 bg-gray-800 border border-gray-600 text-gray-100 placeholder-gray-500 focus:outline-none focus:border-purple-500 text-xs"
           />

@@ -237,9 +237,9 @@ const crawlQueue = []; // [{ normUrl, cookie, job, run, parallel }]
 
 function dequeueAndRun() {
   while (crawlQueue.length > 0) {
-    const nextParallel = crawlQueue[0].parallel;
-    if (activeCrawls >= nextParallel) break;
-    const next = crawlQueue.shift();
+    const runnableIndex = crawlQueue.findIndex((item) => activeCrawls < item.parallel);
+    if (runnableIndex === -1) break;
+    const [next] = crawlQueue.splice(runnableIndex, 1);
     // Update queue positions for remaining items
     crawlQueue.forEach((item, idx) => {
       item.job.queuePosition = idx + 1;
