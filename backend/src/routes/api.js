@@ -2,9 +2,142 @@ const express = require('express');
 const router = express.Router();
 const { run, get, all, ready } = require('../db');
 const { crawlThread } = require('../crawler');
+const axios = require('axios');
+const dns = require('dns').promises;
+const net = require('net');
 
 // In-memory crawl job status (per thread URL)
 const crawlJobs = new Map(); // url -> { status, progress, error, queuePosition? }
+
+const DIRECT_VIDEO_PATTERN = /\.(mp4|webm|ogg|m3u8|mov|m4v)(\?|#|$)/i;
+
+function isDirectVideoUrl(url) {
+  return DIRECT_VIDEO_PATTERN.test(url || '');
+}
+
+function normalizeVideoMedia(item) {
+  const safeUrl = item.url || '';
+  const proxyUrl = `/api/media/proxy?url=${encodeURIComponent(safeUrl)}`;
+  const isYoutube = item.platform === 'youtube' && item.video_id;
+  const isIframePlatform = ['streamable', 'adult'].includes(item.platform);
+  const direct = item.platform === 'direct' || item.platform === 'catbox' || isDirectVideoUrl(safeUrl);
+
+  if (isYoutube) {
+    return {
+      ...item,
+      playback_mode: 'youtube',
+      embed_url: `https://www.youtube.com/embed/${item.video_id}`,
+      proxy_url: null,
+      is_direct_video: false,
+    };
+  }
+
+  if (isIframePlatform) {
+    return {
+      ...item,
+      playback_mode: 'iframe',
+      embed_url: safeUrl,
+      proxy_url: proxyUrl,
+      is_direct_video: false,
+    };
+  }
+
+  return {
+    ...item,
+    playback_mode: 'direct',
+    embed_url: null,
+    proxy_url: proxyUrl,
+    is_direct_video: direct,
+  };
+}
+
+function normalizeMediaItem(item) {
+  if (item.type !== 'video') {
+    return {
+      ...item,
+      playback_mode: null,
+      embed_url: null,
+      proxy_url: null,
+      is_direct_video: false,
+    };
+  }
+  return normalizeVideoMedia(item);
+}
+
+function ipv4ToInt(ip) {
+  return ip.split('.').reduce((acc, octet) => (acc << 8) + Number(octet), 0) >>> 0;
+}
+
+function isPrivateIPv4(ip) {
+  const n = ipv4ToInt(ip);
+  const inRange = (start, end) => n >= ipv4ToInt(start) && n <= ipv4ToInt(end);
+  return (
+    inRange('0.0.0.0', '0.255.255.255') ||
+    inRange('10.0.0.0', '10.255.255.255') ||
+    inRange('127.0.0.0', '127.255.255.255') ||
+    inRange('169.254.0.0', '169.254.255.255') ||
+    inRange('172.16.0.0', '172.31.255.255') ||
+    inRange('192.168.0.0', '192.168.255.255')
+  );
+}
+
+function isPrivateIPv6(ip) {
+  const normalized = String(ip || '').toLowerCase();
+  if (!normalized) return false;
+  if (normalized === '::1') return true;
+  if (normalized.startsWith('fc') || normalized.startsWith('fd')) return true; // fc00::/7
+  if (
+    normalized.startsWith('fe8') ||
+    normalized.startsWith('fe9') ||
+    normalized.startsWith('fea') ||
+    normalized.startsWith('feb')
+  ) {
+    return true; // fe80::/10
+  }
+  if (normalized.startsWith('::ffff:')) {
+    const v4 = normalized.slice(7);
+    if (net.isIP(v4) === 4) return isPrivateIPv4(v4);
+  }
+  return false;
+}
+
+function isPrivateIp(ip) {
+  const family = net.isIP(ip);
+  if (family === 4) return isPrivateIPv4(ip);
+  if (family === 6) return isPrivateIPv6(ip);
+  return false;
+}
+
+function isBlockedHostname(hostname) {
+  const h = String(hostname || '').toLowerCase();
+  return (
+    h === 'localhost' ||
+    h.endsWith('.localhost') ||
+    h.endsWith('.local') ||
+    h === '0.0.0.0' ||
+    h === '::1'
+  );
+}
+
+function isAllowedByAllowlist(hostname) {
+  const raw = process.env.MEDIA_PROXY_ALLOWLIST || '';
+  const allowlist = raw
+    .split(',')
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+
+  if (allowlist.length === 0) return true;
+
+  const h = String(hostname || '').toLowerCase();
+  return allowlist.some((entry) => h === entry || h.endsWith(`.${entry}`));
+}
+
+function isVideoLike(contentType, url) {
+  const type = String(contentType || '').toLowerCase();
+  if (type.startsWith('video/')) return true;
+  if (type.includes('application/octet-stream') && isDirectVideoUrl(url)) return true;
+  return false;
+}
 
 // Persist a batch of posts (and their media) for a given thread row id
 async function savePagePosts(threadRowId, posts) {
@@ -244,7 +377,96 @@ router.get('/media', async (req, res) => {
     params
   );
 
-  res.json({ media, total: countRow.cnt, page: parseInt(page), limit: parseInt(limit) });
+  const normalizedMedia = media.map(normalizeMediaItem);
+  res.json({ media: normalizedMedia, total: countRow.cnt, page: parseInt(page), limit: parseInt(limit) });
+});
+
+// GET /api/media/proxy?url=... — stream remote video through backend for restrictive CORS hosts
+router.get('/media/proxy', async (req, res) => {
+  const { url } = req.query;
+  if (!url || typeof url !== 'string') {
+    return res.status(400).json({ error: 'url query param required' });
+  }
+
+  let target;
+  try {
+    target = new URL(url);
+  } catch (_) {
+    return res.status(400).json({ error: 'Invalid URL' });
+  }
+
+  if (!['http:', 'https:'].includes(target.protocol)) {
+    return res.status(400).json({ error: 'Only http/https URLs are allowed' });
+  }
+
+  if (isBlockedHostname(target.hostname)) {
+    return res.status(400).json({ error: 'Blocked hostname' });
+  }
+
+  if (!isAllowedByAllowlist(target.hostname)) {
+    return res.status(403).json({ error: 'Host is not in MEDIA_PROXY_ALLOWLIST' });
+  }
+
+  try {
+    const resolved = await dns.lookup(target.hostname, { all: true, verbatim: true });
+    if (!resolved || resolved.length === 0) {
+      return res.status(400).json({ error: 'Could not resolve target host' });
+    }
+    if (resolved.some((r) => isPrivateIp(r.address))) {
+      return res.status(400).json({ error: 'Target resolves to a private IP' });
+    }
+  } catch (_) {
+    return res.status(400).json({ error: 'Could not resolve target host' });
+  }
+
+  try {
+    const timeout = parseInt(process.env.MEDIA_PROXY_TIMEOUT_MS || '15000', 10);
+    const upstream = await axios.get(target.href, {
+      responseType: 'stream',
+      timeout,
+      maxRedirects: 3,
+      validateStatus: () => true,
+      headers: {
+        Range: req.headers.range,
+        'User-Agent': 'XamvnCrawlerMediaProxy/1.0',
+      },
+    });
+
+    if (upstream.status >= 400) {
+      if (upstream.data && upstream.data.destroy) upstream.data.destroy();
+      return res.status(upstream.status).json({ error: `Upstream returned HTTP ${upstream.status}` });
+    }
+
+    const contentType = upstream.headers['content-type'] || 'application/octet-stream';
+    if (!isVideoLike(contentType, target.href)) {
+      if (upstream.data && upstream.data.destroy) upstream.data.destroy();
+      return res.status(415).json({ error: 'Upstream content is not a supported video type' });
+    }
+
+    const passthroughHeaders = [
+      'content-type',
+      'content-length',
+      'content-range',
+      'accept-ranges',
+      'last-modified',
+      'etag',
+    ];
+
+    for (const header of passthroughHeaders) {
+      const val = upstream.headers[header];
+      if (val != null) res.setHeader(header, val);
+    }
+    res.setHeader('Cache-Control', 'public, max-age=300');
+
+    upstream.data.on('error', () => {
+      if (!res.headersSent) res.status(502).end();
+      else res.end();
+    });
+    res.status(upstream.status);
+    upstream.data.pipe(res);
+  } catch (err) {
+    return res.status(502).json({ error: `Proxy request failed: ${err.message}` });
+  }
 });
 
 // GET /api/stats — overall stats

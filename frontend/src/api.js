@@ -39,6 +39,9 @@ export const api = {
     return request(`/media?${qs}`);
   },
 
+  getMediaProxyUrl: (url) =>
+    `${API_BASE}/media/proxy?url=${encodeURIComponent(url)}`,
+
   getStats: () => request('/stats'),
 
   health: () => {
