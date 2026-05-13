@@ -1,4 +1,5 @@
 const API_BASE = import.meta.env.VITE_API_URL || '/api';
+const HEALTH_TIMEOUT_MS = 8000;
 
 async function request(path, options = {}) {
   const res = await fetch(`${API_BASE}${path}`, {
@@ -42,7 +43,7 @@ export const api = {
 
   health: () => {
     const healthUrl = API_BASE.replace(/\/api$/, '') + '/health';
-    return fetch(healthUrl, { signal: AbortSignal.timeout(8000) }).then((res) => {
+    return fetch(healthUrl, { signal: AbortSignal.timeout(HEALTH_TIMEOUT_MS) }).then((res) => {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return res.json();
     });
