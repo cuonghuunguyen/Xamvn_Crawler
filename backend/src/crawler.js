@@ -11,12 +11,15 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 function parseThreadUrl(rawUrl) {
   try {
     const url = new URL(rawUrl);
-    // Accept any host for xamvn-like forums
-    const match = url.pathname.match(/\/threads\/([^/]+)/);
+    // Accept both XenForo thread routes: /threads/... and /r/...
+    const match = url.pathname.match(/^\/(threads|r)\/([^/?#]+)/);
     if (!match) throw new Error('Not a valid thread URL');
-    const threadId = match[1].replace(/\/$/, '');
+    const route = match[1];
+    const threadKey = match[2].replace(/\/$/, '');
+    const idMatch = threadKey.match(/(?:^|\.)(\d+)$/);
+    const threadId = idMatch ? idMatch[1] : threadKey;
     const base = `${url.protocol}//${url.host}`;
-    return { threadId, base };
+    return { threadId, threadKey, route, base };
   } catch (e) {
     throw new Error(`Invalid URL: ${e.message}`);
   }
@@ -381,7 +384,7 @@ function getTitle($) {
 
 // Main crawl function
 async function crawlThread(rawUrl, onProgress, options = {}, onPage = null) {
-  const { threadId, base } = parseThreadUrl(rawUrl);
+  const { threadId, threadKey, route, base } = parseThreadUrl(rawUrl);
   const client = buildClient(base, options);
   const report = (msg) => onProgress && onProgress(msg);
 
@@ -392,7 +395,7 @@ async function crawlThread(rawUrl, onProgress, options = {}, onPage = null) {
   try {
     page1Html = await fetchHtml(
       client,
-      `${base}/threads/${threadId}/`,
+      `${base}/${route}/${threadKey}/`,
       base,
       options,
       report,
@@ -431,7 +434,7 @@ async function crawlThread(rawUrl, onProgress, options = {}, onPage = null) {
     try {
       const html = await fetchHtml(
         client,
-        `${base}/threads/${threadId}/page-${p}`,
+        `${base}/${route}/${threadKey}/page-${p}`,
         base,
         options,
         report,
