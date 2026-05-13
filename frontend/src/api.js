@@ -39,4 +39,12 @@ export const api = {
   },
 
   getStats: () => request('/stats'),
+
+  health: () => {
+    const healthUrl = API_BASE.replace(/\/api$/, '') + '/health';
+    return fetch(healthUrl, { signal: AbortSignal.timeout(8000) }).then((res) => {
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    });
+  },
 };
