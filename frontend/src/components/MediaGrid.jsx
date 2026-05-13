@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { api } from '../api';
 
 function ImageCard({ item }) {
   const [imgError, setImgError] = useState(false);
@@ -27,15 +28,14 @@ function ImageCard({ item }) {
   );
 }
 
-function VideoCard({ item }) {
-  const isYoutube = item.platform === 'youtube';
+function VideoCard({ item, onOpen }) {
+  const isYoutube = item.playback_mode === 'youtube' || item.platform === 'youtube';
   const thumbnail = item.thumbnail;
 
   return (
-    <a
-      href={item.url}
-      target="_blank"
-      rel="noreferrer noopener"
+    <button
+      type="button"
+      onClick={onOpen}
       className="block rounded-lg overflow-hidden bg-gray-800 border border-gray-700 hover:border-blue-500 transition-colors group"
     >
       <div className="aspect-video bg-gray-900 relative flex items-center justify-center">
@@ -67,12 +67,125 @@ function VideoCard({ item }) {
           </span>
         )}
       </div>
-      <div className="px-2 py-1.5 text-xs text-gray-500 truncate">{item.thread_title}</div>
-    </a>
+      <div className="px-2 py-1.5 text-xs text-gray-500 truncate text-left">
+        {item.thread_title}
+      </div>
+    </button>
+  );
+}
+
+function VideoModal({ item, onClose }) {
+  const [src, setSrc] = useState(item.url);
+  const [usingProxy, setUsingProxy] = useState(false);
+  const [playbackFailed, setPlaybackFailed] = useState(false);
+
+  const mode = item.playback_mode || (item.platform === 'youtube' ? 'youtube' : 'direct');
+  const youtubeEmbedUrl =
+    item.embed_url ||
+    (item.video_id ? `https://www.youtube.com/embed/${item.video_id}` : null);
+  const iframeUrl = item.embed_url || item.url;
+  const proxyUrl = item.proxy_url || (item.id ? api.getMediaProxyUrl(item.id) : null);
+
+  const onVideoError = () => {
+    if (!usingProxy && proxyUrl) {
+      setSrc(proxyUrl);
+      setUsingProxy(true);
+      return;
+    }
+    setPlaybackFailed(true);
+  };
+
+  useEffect(() => {
+    const onKeyDown = (e) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [onClose]);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm p-4 flex items-center justify-center"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby={`video-modal-title-${item.id}`}
+    >
+      <div className="w-full max-w-5xl rounded-xl overflow-hidden border border-gray-700 bg-gray-900">
+        <div className="flex items-center justify-between px-4 py-2 border-b border-gray-800">
+          <div id={`video-modal-title-${item.id}`} className="text-sm text-gray-300 truncate mr-3">
+            {item.thread_title || 'Video'}
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-2 py-1 text-xs rounded bg-gray-800 hover:bg-gray-700 text-gray-200"
+          >
+            Close
+          </button>
+        </div>
+
+        <div className="bg-black aspect-video w-full flex items-center justify-center">
+          {mode === 'youtube' && youtubeEmbedUrl ? (
+            <iframe
+              title="YouTube player"
+              src={youtubeEmbedUrl}
+              className="w-full h-full"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+              allowFullScreen
+            />
+          ) : mode === 'iframe' ? (
+            <iframe
+              title="Embedded video"
+              src={iframeUrl}
+              className="w-full h-full"
+              allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
+              allowFullScreen
+            />
+          ) : playbackFailed ? (
+            <div className="text-center px-4 text-gray-300 text-sm">
+              <p>Unable to play this video inline.</p>
+              <a
+                href={item.url}
+                target="_blank"
+                rel="noreferrer noopener"
+                className="inline-block mt-3 px-3 py-1.5 text-xs rounded bg-purple-600 hover:bg-purple-500 text-white"
+              >
+                Open source link
+              </a>
+            </div>
+          ) : (
+            <video
+              src={src}
+              controls
+              autoPlay
+              className="w-full h-full"
+              onError={onVideoError}
+            />
+          )}
+        </div>
+
+        <div className="px-4 py-2 border-t border-gray-800 text-xs text-gray-400 flex flex-wrap items-center gap-2">
+          <span className="truncate">{item.url}</span>
+          <a
+            href={item.url}
+            target="_blank"
+            rel="noreferrer noopener"
+            className="ml-auto px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 text-gray-200"
+          >
+            Open source
+          </a>
+        </div>
+      </div>
+    </div>
   );
 }
 
 export default function MediaGrid({ media, type }) {
+  const [selectedVideo, setSelectedVideo] = useState(null);
+
   if (!media || media.length === 0) {
     return (
       <div className="text-center text-gray-500 py-12 text-sm">
@@ -86,14 +199,19 @@ export default function MediaGrid({ media, type }) {
   }
 
   return (
-    <div className="grid grid-cols-1 min-[420px]:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-3">
-      {media.map((item) =>
-        item.type === 'image' ? (
-          <ImageCard key={item.id} item={item} />
-        ) : (
-          <VideoCard key={item.id} item={item} />
-        ),
+    <>
+      <div className="grid grid-cols-1 min-[420px]:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-3">
+        {media.map((item) =>
+          item.type === 'image' ? (
+            <ImageCard key={item.id} item={item} />
+          ) : (
+            <VideoCard key={item.id} item={item} onOpen={() => setSelectedVideo(item)} />
+          ),
+        )}
+      </div>
+      {selectedVideo && (
+        <VideoModal key={selectedVideo.id} item={selectedVideo} onClose={() => setSelectedVideo(null)} />
       )}
-    </div>
+    </>
   );
 }

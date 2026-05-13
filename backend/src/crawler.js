@@ -182,6 +182,7 @@ async function fetchHtml(client, url, baseUrl, options, report, label) {
 function extractMedia($, baseUrl) {
   const media = [];
   const seen = new Set();
+  const directVideoPattern = /\.(mp4|webm|ogg|m3u8|mov|m4v)(\?|#|$)/i;
 
   function addMedia(url, type, extra = {}) {
     if (!url || seen.has(url)) return;
@@ -265,6 +266,17 @@ function extractMedia($, baseUrl) {
     let absUrl = src;
     try { absUrl = new URL(src, baseUrl).href; } catch (_) {}
     addMedia(absUrl, 'video', { platform: 'direct' });
+  });
+
+  // Direct video links in post content
+  $('a[href]').each((_, el) => {
+    const href = $(el).attr('href') || '';
+    if (!directVideoPattern.test(href)) return;
+    let absUrl = href;
+    try { absUrl = new URL(href, baseUrl).href; } catch (_) {}
+    addMedia(absUrl, 'video', {
+      platform: absUrl.includes('catbox.moe') ? 'catbox' : 'direct',
+    });
   });
 
   // Streamable / other common platforms
