@@ -202,7 +202,7 @@ function ImageModal({ item, onClose }) {
         ) : (
           <img
             src={item.url}
-            alt=""
+            alt={item.thread_title || ''}
             draggable={false}
             onError={() => setImgError(true)}
             style={{
@@ -221,7 +221,7 @@ function ImageModal({ item, onClose }) {
       {/* Footer */}
       <div className="shrink-0 px-4 py-2 border-t border-gray-800 text-xs text-gray-400 flex items-center gap-3">
         <span className="truncate flex-1">{item.url}</span>
-        <span className="text-gray-600 hidden sm:inline shrink-0">Scroll to zoom · Pinch on mobile</span>
+        <span className="text-gray-600 hidden sm:inline shrink-0">Scroll to zoom, pinch on mobile</span>
       </div>
     </div>
   );

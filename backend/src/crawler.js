@@ -208,7 +208,7 @@ function extractMedia($, baseUrl) {
 
   // --- Images ---
   // XenForo img tags inside post content
-  $('article .bbWrapper img, .message-body img, .post-body img, .bbWrapper img, img').each((_, el) => {
+  $('article .bbWrapper img, .message-body img, .post-body img, img').each((_, el) => {
     const src = $(el).attr('data-src') || $(el).attr('src') || '';
     if (!src) return;
     // Skip smilie / reaction / icon elements by class or attribute
