@@ -386,20 +386,22 @@ async function crawlThread(rawUrl, onProgress, options = {}, onPage = null) {
   const allPosts = parsePage($1, base);
   if (onPage) await onPage(allPosts, 1);
 
-  // Honour page cap to avoid runaway CPU on free-tier hosts
-  const maxPages = parseInt(process.env.CRAWL_MAX_PAGES || '50', 10);
-  const effectivePageCount = Math.min(pageCount, maxPages);
-  if (effectivePageCount < pageCount) {
-    report(`Page cap reached: crawling ${effectivePageCount} of ${pageCount} pages (CRAWL_MAX_PAGES=${maxPages})`);
+  const maxPages = Number.isInteger(options.maxPages) && options.maxPages > 0
+    ? options.maxPages
+    : null;
+  const effectivePageCount = maxPages ? Math.min(pageCount, maxPages) : pageCount;
+  if (maxPages && effectivePageCount < pageCount) {
+    report(`Page cap reached: crawling ${effectivePageCount} of ${pageCount} pages (maxPages=${maxPages})`);
   }
 
-  // Configurable inter-page delay (default 1200 ms — gentle on Render free tier)
-  const pageDelay = parseInt(process.env.CRAWL_PAGE_DELAY_MS || '1200', 10);
+  const pageDelay = Number.isInteger(options.pageDelayMs) && options.pageDelayMs >= 0
+    ? options.pageDelayMs
+    : 0;
 
   // Fetch remaining pages
   for (let p = 2; p <= effectivePageCount; p++) {
     report(`Fetching page ${p}/${effectivePageCount}…`);
-    await sleep(pageDelay);
+    if (pageDelay > 0) await sleep(pageDelay);
     try {
       const html = await fetchHtml(
         client,
