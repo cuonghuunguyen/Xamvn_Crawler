@@ -2,11 +2,12 @@ import { useEffect, useState } from 'react';
 import { useCrawl } from '../hooks/useCrawl';
 
 const COOKIE_STORAGE_KEY = 'xamvn_cookie_header';
+const DEFAULT_PARALLEL = 3;
 
 export default function CrawlForm({ onDone, onTick }) {
   const [url, setUrl] = useState('');
   const [cookie, setCookie] = useState('');
-  const [parallel, setParallel] = useState('3');
+  const [parallel, setParallel] = useState(String(DEFAULT_PARALLEL));
   const [maxPages, setMaxPages] = useState('');
   const [pageDelayMs, setPageDelayMs] = useState('');
   const { status, progress, error, queuePosition, startCrawl } = useCrawl();
@@ -32,7 +33,7 @@ export default function CrawlForm({ onDone, onTick }) {
     const parsedMaxPages = maxPages.trim() ? Number.parseInt(maxPages, 10) : null;
     const parsedPageDelayMs = pageDelayMs.trim() ? Number.parseInt(pageDelayMs, 10) : null;
     const crawlOptions = {
-      parallel: Number.isInteger(parsedParallel) && parsedParallel > 0 ? parsedParallel : 3,
+      parallel: Number.isInteger(parsedParallel) && parsedParallel > 0 ? parsedParallel : DEFAULT_PARALLEL,
       ...(Number.isInteger(parsedMaxPages) && parsedMaxPages > 0 ? { maxPages: parsedMaxPages } : {}),
       ...(Number.isInteger(parsedPageDelayMs) && parsedPageDelayMs >= 0 ? { pageDelayMs: parsedPageDelayMs } : {}),
     };

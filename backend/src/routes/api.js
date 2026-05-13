@@ -232,12 +232,13 @@ async function savePagePosts(threadRowId, posts) {
 
 const DEFAULT_CRAWL_PARALLEL = 3;
 const MAX_CRAWL_PARALLEL = 10;
-let maxConcurrentCrawls = DEFAULT_CRAWL_PARALLEL;
 let activeCrawls = 0;
-const crawlQueue = []; // [{ normUrl, cookie, job, threadRowIdResolver }]
+const crawlQueue = []; // [{ normUrl, cookie, job, run, parallel }]
 
 function dequeueAndRun() {
-  while (activeCrawls < maxConcurrentCrawls && crawlQueue.length > 0) {
+  while (crawlQueue.length > 0) {
+    const nextParallel = crawlQueue[0].parallel;
+    if (activeCrawls >= nextParallel) break;
     const next = crawlQueue.shift();
     // Update queue positions for remaining items
     crawlQueue.forEach((item, idx) => {
@@ -304,9 +305,7 @@ router.post('/crawl', async (req, res) => {
     return res.status(400).json({ error: 'pageDelayMs must be an integer between 0 and 60000 when provided' });
   }
 
-  if (parallel != null) {
-    maxConcurrentCrawls = parallel;
-  }
+  const effectiveParallel = parallel ?? DEFAULT_CRAWL_PARALLEL;
 
   // Normalise URL
   let normUrl = url.trim();
@@ -342,7 +341,7 @@ router.post('/crawl', async (req, res) => {
     ...(pageDelayMs != null ? { pageDelayMs } : {}),
   };
 
-  if (activeCrawls < maxConcurrentCrawls) {
+  if (activeCrawls < effectiveParallel) {
     // Start immediately
     runCrawlJob(normUrl, cookie, job, threadRow.id, crawlOptions);
   } else {
@@ -352,11 +351,12 @@ router.post('/crawl', async (req, res) => {
       normUrl,
       cookie,
       job,
+      parallel: effectiveParallel,
       run: () => runCrawlJob(normUrl, cookie, job, threadRow.id, crawlOptions),
     });
   }
 
-  dequeueAndRun();
+  if (activeCrawls < effectiveParallel) dequeueAndRun();
 
   res.json({ message: job.status === 'running' ? 'Crawl started' : 'Crawl queued', url: normUrl, ...(job.status === 'queued' ? { queuePosition: job.queuePosition } : {}) });
 });
